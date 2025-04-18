@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#1e3a8a" />
+  <title>Colorado River Flow</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      margin: 0;
+      padding: 2rem;
+      background-color: #f1f5f9;
+      color: #1e3a8a;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+    }
+    .card {
+      background: white;
+      padding: 2rem;
+      border-radius: 1rem;
+      box-shadow: 0 10px 20px rgba(0,0,0,0.1);
+      text-align: center;
+    }
+    .value {
+      font-size: 2.5rem;
+      font-weight: bold;
+      margin-top: 1rem;
+    }
+    .timestamp {
+      margin-top: 1rem;
+      font-size: 0.9rem;
+      color: #64748b;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Colorado River Flow</h1>
+    <div class="value" id="flow">Loading...</div>
+    <div class="timestamp" id="timestamp"></div>
+  </div>
+
+  <script>
+    const siteId = "09380000"; // Colorado River at Grand Canyon
+    const url = `https://waterservices.usgs.gov/nwis/iv/?format=json&sites=${siteId}&parameterCd=00060&siteStatus=all`;
+
+    fetch(url)
+      .then(res => res.json())
+      .then(data => {
+        const series = data.value.timeSeries[0];
+        const flow = series.values[0].value[0].value;
+        const timestamp = series.values[0].value[0].dateTime;
+
+        document.getElementById("flow").textContent = `${flow} CFS`;
+        document.getElementById("timestamp").textContent = `As of ${new Date(timestamp).toLocaleString()}`;
+      })
+      .catch(err => {
+        document.getElementById("flow").textContent = "Error loading data.";
+        console.error(err);
+      });
+  </script>
+</body>
+</html>
