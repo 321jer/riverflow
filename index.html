@@ -77,8 +77,8 @@
         ]);
 
         const currentData = await currentRes.json();
-        const extractValue = (res) => res.value.timeSeries?.[0]?.values[0]?.value.map(v => parseFloat(v.value)).filter(v => !isNaN(v)) || [];
-        const extractDate = (res) => res.value.timeSeries?.[0]?.values[0]?.value[0]?.dateTime || '';
+        const extractValue = (res) => res.value.timeSeries[0]?.values[0]?.value.map(v => parseFloat(v.value)).filter(v => !isNaN(v));
+        const extractDate = (res) => res.value.timeSeries[0]?.values[0]?.value[0]?.dateTime || '';
 
         const flow = currentData.value.timeSeries.find(s => s.variable.variableCode[0].value === '00060')?.values[0]?.value[0]?.value || 'N/A';
         const tempC = currentData.value.timeSeries.find(s => s.variable.variableCode[0].value === '00010')?.values[0]?.value[0]?.value || null;
