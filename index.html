@@ -38,6 +38,17 @@
     .metric {
       margin: 0.2em 0;
     }
+    .highlight-flow {
+      font-size: 1.4em;
+      font-weight: bold;
+      color: #4dd0e1;
+    }
+    .min {
+      color: #64b5f6;
+    }
+    .max {
+      color: #ef5350;
+    }
   </style>
 </head>
 <body>
@@ -90,10 +101,10 @@
           if (!arr || !arr.length) return 'N/A';
           const sorted = [...arr].sort((a, b) => a - b);
           const idx = Math.floor(p * sorted.length);
-          return sorted[idx].toFixed(2);
+          return sorted[idx].toLocaleString();
         };
 
-        const getMax = (arr) => (arr && arr.length ? Math.max(...arr).toFixed(2) : 'N/A');
+        const getMax = (arr) => (arr && arr.length ? Math.max(...arr).toLocaleString() : 'N/A');
 
         const yearData = extractValue(await yearRes.json());
         const monthData = extractValue(await monthRes.json());
@@ -115,23 +126,25 @@
     }
 
     function renderTile(name, flow, timestamp, temp, maxYear, minYear, maxMonth, minMonth, max5, min5, index) {
-      const localTime = timestamp ? new Date(timestamp).toLocaleString('en-US', { timeZone: 'America/Denver' }) : 'N/A';
+      const localTime = timestamp ? new Date(timestamp).toLocaleString('en-US', { timeZone: 'America/Denver', hour: 'numeric', minute: 'numeric', month: 'short', day: 'numeric' }) : 'N/A';
+
+      const flowDisplay = flow !== 'N/A' ? parseFloat(flow).toLocaleString() : 'N/A';
 
       const tile = document.createElement('div');
       tile.className = 'tile';
       tile.style.setProperty('--order', index);
       tile.innerHTML = `
         <h2>${name}</h2>
-        <div class="metric"><strong>Flow:</strong> ${flow ?? 'N/A'} CFS</div>
-        <div class="metric"><strong>Water Temp:</strong> ${temp ?? 'N/A'} °F</div>
+        <div class="metric highlight-flow">${flowDisplay} CFS</div>
+        <div class="metric"><strong>Temp:</strong> ${temp ?? 'N/A'} °F</div>
         <div class="metric"><strong>Updated:</strong> ${localTime}</div>
         <hr>
-        <div class="metric"><strong>Max (Last Year):</strong> ${maxYear ?? 'N/A'} CFS</div>
-        <div class="metric"><strong>Min (Last Year):</strong> ${minYear ?? 'N/A'} CFS</div>
-        <div class="metric"><strong>Max (Last Yr Mo):</strong> ${maxMonth ?? 'N/A'} CFS</div>
-        <div class="metric"><strong>Min (Last Yr Mo):</strong> ${minMonth ?? 'N/A'} CFS</div>
-        <div class="metric"><strong>Max (5 Years):</strong> ${max5 ?? 'N/A'} CFS</div>
-        <div class="metric"><strong>Min (5 Years):</strong> ${min5 ?? 'N/A'} CFS</div>
+        <div class="metric min"><strong>Min (Last Year):</strong> ${minYear ?? 'N/A'} CFS</div>
+        <div class="metric max"><strong>Max (Last Year):</strong> ${maxYear ?? 'N/A'} CFS</div>
+        <div class="metric min"><strong>Min (Last Yr Mo):</strong> ${minMonth ?? 'N/A'} CFS</div>
+        <div class="metric max"><strong>Max (Last Yr Mo):</strong> ${maxMonth ?? 'N/A'} CFS</div>
+        <div class="metric min"><strong>Min (5 Years):</strong> ${min5 ?? 'N/A'} CFS</div>
+        <div class="metric max"><strong>Max (5 Years):</strong> ${max5 ?? 'N/A'} CFS</div>
       `;
       dashboard.appendChild(tile);
     }
