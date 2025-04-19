@@ -2,49 +2,131 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Colorado River Flow</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Utah River Flow Dashboard</title>
   <meta http-equiv="refresh" content="3600">
   <style>
     body {
       font-family: Arial, sans-serif;
+      background-color: #f4f9ff;
+      margin: 0;
+      padding: 1em;
+    }
+    h1 {
       text-align: center;
-      padding: 2em;
-      background: #e6f2ff;
-      color: #003366;
+      margin-bottom: 1em;
     }
-    #flow-value {
-      font-size: 3em;
-      margin-top: 1em;
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+      gap: 1em;
     }
-    #timestamp {
-      margin-top: 0.5em;
-      font-size: 1em;
+    .tile {
+      background: white;
+      border-radius: 10px;
+      padding: 1em;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    }
+    .tile h2 {
+      font-size: 1.2em;
+      margin-bottom: 0.5em;
+    }
+    .metric {
+      margin: 0.2em 0;
     }
   </style>
 </head>
 <body>
-  <h1>Colorado River Flow @ Lees Ferry</h1>
-  <div id="flow-value">Loading...</div>
-  <div id="timestamp">Fetching latest data...</div>
+  <h1>Utah River Flow Dashboard</h1>
+  <div class="grid" id="dashboard"></div>
 
   <script>
-    async function fetchData() {
+    const sites = [
+      { name: "Colorado River at Potash, UT", id: "09185600" },
+      { name: "Colorado River Near Cisco, UT", id: "09180500" },
+      { name: "Mill Creek Below Sheley Tunnel, Near Moab, UT", id: "09183600" },
+      { name: "Mill Creek Blw Pack Creek NR Mouth at Moab, UT", id: "09185100" },
+      { name: "North Fork Mill Creek Near Moab, Utah", id: "09183800" },
+      { name: "Logan River Above State Dam, Near Logan, UT", id: "10109000" },
+      { name: "Provo Riv at Riv Road Bridge NR Heber City, UT", id: "10155200" },
+      { name: "Green River at Green River, UT", id: "09315000" }
+    ];
+
+    const dashboard = document.getElementById('dashboard');
+
+    async function fetchSiteData(site) {
+      const now = new Date();
+      const today = now.toISOString().split('T')[0];
+      const oneYearAgo = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate()).toISOString().split('T')[0];
+      const fiveYearsAgo = new Date(now.getFullYear() - 5, now.getMonth(), now.getDate()).toISOString().split('T')[0];
+      const thisMonthLastYearStart = new Date(now.getFullYear() - 1, now.getMonth(), 1).toISOString().split('T')[0];
+      const thisMonthLastYearEnd = new Date(now.getFullYear() - 1, now.getMonth() + 1, 0).toISOString().split('T')[0];
+
+      const baseURL = "https://waterservices.usgs.gov/nwis/iv/?format=json&sites=" + site.id + "&parameterCd=00060,00010&siteStatus=all";
+      const statURL = (start, end, stat) => `https://nwis.waterservices.usgs.gov/nwis/dv/?format=json&sites=${site.id}&startDT=${start}&endDT=${end}&statCd=${stat}&parameterCd=00060`;
+
       try {
-        const response = await fetch("https://waterservices.usgs.gov/nwis/iv/?format=json&sites=09380000&parameterCd=00060&siteStatus=all");
-        const data = await response.json();
-        const flow = data.value.timeSeries[0].values[0].value[0].value;
-        const timestamp = data.value.timeSeries[0].values[0].value[0].dateTime;
-        document.getElementById("flow-value").textContent = `${flow} CFS`;
-        document.getElementById("timestamp").textContent = `As of ${new Date(timestamp).toLocaleString()}`;
-      } catch (error) {
-        document.getElementById("flow-value").textContent = `Error fetching data`;
-        document.getElementById("timestamp").textContent = ``;
-        console.error("Failed to fetch USGS data:", error);
+        const [currentRes, maxYearRes, minYearRes, maxMonthRes, minMonthRes, max5Res, min5Res] = await Promise.all([
+          fetch(baseURL),
+          fetch(statURL(oneYearAgo, today, '00003')),
+          fetch(statURL(oneYearAgo, today, '00001')),
+          fetch(statURL(thisMonthLastYearStart, thisMonthLastYearEnd, '00003')),
+          fetch(statURL(thisMonthLastYearStart, thisMonthLastYearEnd, '00001')),
+          fetch(statURL(fiveYearsAgo, today, '00003')),
+          fetch(statURL(fiveYearsAgo, today, '00001')),
+        ]);
+
+        const currentData = await currentRes.json();
+        const extractValue = (res) => res.value.timeSeries[0]?.values[0]?.value[0]?.value || 'N/A';
+        const extractDate = (res) => res.value.timeSeries[0]?.values[0]?.value[0]?.dateTime || '';
+
+        const flow = extractValue(currentData);
+        const tempSeries = currentData.value.timeSeries.find(s => s.variable.variableCode[0].value === '00010');
+        const temp = tempSeries?.values[0]?.value[0]?.value || 'N/A';
+        const timestamp = extractDate(currentData);
+
+        const maxYear = extractValue(await maxYearRes.json());
+        const minYear = extractValue(await minYearRes.json());
+        const maxMonth = extractValue(await maxMonthRes.json());
+        const minMonth = extractValue(await minMonthRes.json());
+        const max5 = extractValue(await max5Res.json());
+        const min5 = extractValue(await min5Res.json());
+
+        renderTile(site.name, flow, timestamp, temp, maxYear, minYear, maxMonth, minMonth, max5, min5);
+
+      } catch (e) {
+        console.error("Error fetching data for", site.name, e);
       }
     }
 
-    fetchData(); // Initial fetch on load
-    setInterval(fetchData, 3600000); // Refresh every hour
+    function renderTile(name, flow, timestamp, temp, maxYear, minYear, maxMonth, minMonth, max5, min5) {
+      const localTime = new Date(timestamp).toLocaleString('en-US', { timeZone: 'America/Denver' });
+
+      const tile = document.createElement('div');
+      tile.className = 'tile';
+      tile.innerHTML = `
+        <h2>${name}</h2>
+        <div class="metric"><strong>Flow:</strong> ${flow} CFS</div>
+        <div class="metric"><strong>Water Temp:</strong> ${temp} °C</div>
+        <div class="metric"><strong>Updated:</strong> ${localTime}</div>
+        <hr>
+        <div class="metric"><strong>Max (Last Year):</strong> ${maxYear} CFS</div>
+        <div class="metric"><strong>Min (Last Year):</strong> ${minYear} CFS</div>
+        <div class="metric"><strong>Max (This Month Last Year):</strong> ${maxMonth} CFS</div>
+        <div class="metric"><strong>Min (This Month Last Year):</strong> ${minMonth} CFS</div>
+        <div class="metric"><strong>Max (5 Years):</strong> ${max5} CFS</div>
+        <div class="metric"><strong>Min (5 Years):</strong> ${min5} CFS</div>
+      `;
+      dashboard.appendChild(tile);
+    }
+
+    sites.forEach(site => fetchSiteData(site));
+    setInterval(() => {
+      dashboard.innerHTML = '';
+      sites.forEach(site => fetchSiteData(site));
+    }, 3600000);
   </script>
 </body>
 </html>
+
+
