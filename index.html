@@ -77,7 +77,7 @@
         ]);
 
         const currentData = await currentRes.json();
-        const extractValue = (res) => res.value.timeSeries[0]?.values[0]?.value.map(v => parseFloat(v.value)).filter(v => !isNaN(v));
+        const extractValue = (res) => res.value.timeSeries[0]?.values[0]?.value.map(v => parseFloat(v.value)).filter(v => !isNaN(v)) || [];
         const extractDate = (res) => res.value.timeSeries[0]?.values[0]?.value[0]?.dateTime || '';
 
         const flow = currentData.value.timeSeries.find(s => s.variable.variableCode[0].value === '00060')?.values[0]?.value[0]?.value || 'N/A';
@@ -86,11 +86,13 @@
         const timestamp = extractDate(currentData);
 
         const percentile = (arr, p) => {
-          if (!arr.length) return 'N/A';
+          if (!arr || !arr.length) return 'N/A';
           const sorted = [...arr].sort((a, b) => a - b);
           const idx = Math.floor(p * sorted.length);
           return sorted[idx].toFixed(2);
         };
+
+        const getMax = (arr) => (arr && arr.length ? Math.max(...arr).toFixed(2) : 'N/A');
 
         const yearData = extractValue(await yearRes.json());
         const monthData = extractValue(await monthRes.json());
@@ -100,33 +102,34 @@
         const minMonth = percentile(monthData, 0.1);
         const min5 = percentile(fiveData, 0.1);
 
-        const maxYear = yearData.length ? Math.max(...yearData).toFixed(2) : 'N/A';
-        const maxMonth = monthData.length ? Math.max(...monthData).toFixed(2) : 'N/A';
-        const max5 = fiveData.length ? Math.max(...fiveData).toFixed(2) : 'N/A';
+        const maxYear = getMax(yearData);
+        const maxMonth = getMax(monthData);
+        const max5 = getMax(fiveData);
 
         renderTile(site.name, flow, timestamp, tempF, maxYear, minYear, maxMonth, minMonth, max5, min5);
       } catch (e) {
         console.error("Error fetching data for", site.name, e);
+        renderTile(site.name, 'N/A', '', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A');
       }
     }
 
     function renderTile(name, flow, timestamp, temp, maxYear, minYear, maxMonth, minMonth, max5, min5) {
-      const localTime = new Date(timestamp).toLocaleString('en-US', { timeZone: 'America/Denver' });
+      const localTime = timestamp ? new Date(timestamp).toLocaleString('en-US', { timeZone: 'America/Denver' }) : 'N/A';
 
       const tile = document.createElement('div');
       tile.className = 'tile';
       tile.innerHTML = `
         <h2>${name}</h2>
-        <div class="metric"><strong>Flow:</strong> ${flow} CFS</div>
-        <div class="metric"><strong>Water Temp:</strong> ${temp} °F</div>
+        <div class="metric"><strong>Flow:</strong> ${flow ?? 'N/A'} CFS</div>
+        <div class="metric"><strong>Water Temp:</strong> ${temp ?? 'N/A'} °F</div>
         <div class="metric"><strong>Updated:</strong> ${localTime}</div>
         <hr>
-        <div class="metric"><strong>Max (Last Year):</strong> ${maxYear} CFS</div>
-        <div class="metric"><strong>Min (Last Year):</strong> ${minYear} CFS</div>
-        <div class="metric"><strong>Max (This Month Last Year):</strong> ${maxMonth} CFS</div>
-        <div class="metric"><strong>Min (This Month Last Year):</strong> ${minMonth} CFS</div>
-        <div class="metric"><strong>Max (5 Years):</strong> ${max5} CFS</div>
-        <div class="metric"><strong>Min (5 Years):</strong> ${min5} CFS</div>
+        <div class="metric"><strong>Max (Last Year):</strong> ${maxYear ?? 'N/A'} CFS</div>
+        <div class="metric"><strong>Min (Last Year):</strong> ${minYear ?? 'N/A'} CFS</div>
+        <div class="metric"><strong>Max (This Month Last Year):</strong> ${maxMonth ?? 'N/A'} CFS</div>
+        <div class="metric"><strong>Min (This Month Last Year):</strong> ${minMonth ?? 'N/A'} CFS</div>
+        <div class="metric"><strong>Max (5 Years):</strong> ${max5 ?? 'N/A'} CFS</div>
+        <div class="metric"><strong>Min (5 Years):</strong> ${min5 ?? 'N/A'} CFS</div>
       `;
       dashboard.appendChild(tile);
     }
