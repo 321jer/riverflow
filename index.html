@@ -28,6 +28,7 @@
       border-radius: 10px;
       padding: 1em;
       box-shadow: 0 2px 5px rgba(0,0,0,0.5);
+      order: var(--order);
     }
     .tile h2 {
       font-size: 1.2em;
@@ -57,7 +58,7 @@
 
     const dashboard = document.getElementById('dashboard');
 
-    async function fetchSiteData(site) {
+    async function fetchSiteData(site, index) {
       const now = new Date();
       const today = now.toISOString().split('T')[0];
       const oneYearAgo = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate()).toISOString().split('T')[0];
@@ -106,18 +107,19 @@
         const maxMonth = getMax(monthData);
         const max5 = getMax(fiveData);
 
-        renderTile(site.name, flow, timestamp, tempF, maxYear, minYear, maxMonth, minMonth, max5, min5);
+        renderTile(site.name, flow, timestamp, tempF, maxYear, minYear, maxMonth, minMonth, max5, min5, index);
       } catch (e) {
         console.error("Error fetching data for", site.name, e);
-        renderTile(site.name, 'N/A', '', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A');
+        renderTile(site.name, 'N/A', '', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', index);
       }
     }
 
-    function renderTile(name, flow, timestamp, temp, maxYear, minYear, maxMonth, minMonth, max5, min5) {
+    function renderTile(name, flow, timestamp, temp, maxYear, minYear, maxMonth, minMonth, max5, min5, index) {
       const localTime = timestamp ? new Date(timestamp).toLocaleString('en-US', { timeZone: 'America/Denver' }) : 'N/A';
 
       const tile = document.createElement('div');
       tile.className = 'tile';
+      tile.style.setProperty('--order', index);
       tile.innerHTML = `
         <h2>${name}</h2>
         <div class="metric"><strong>Flow:</strong> ${flow ?? 'N/A'} CFS</div>
@@ -126,18 +128,18 @@
         <hr>
         <div class="metric"><strong>Max (Last Year):</strong> ${maxYear ?? 'N/A'} CFS</div>
         <div class="metric"><strong>Min (Last Year):</strong> ${minYear ?? 'N/A'} CFS</div>
-        <div class="metric"><strong>Max (This Month Last Year):</strong> ${maxMonth ?? 'N/A'} CFS</div>
-        <div class="metric"><strong>Min (This Month Last Year):</strong> ${minMonth ?? 'N/A'} CFS</div>
+        <div class="metric"><strong>Max (Last Yr Mo):</strong> ${maxMonth ?? 'N/A'} CFS</div>
+        <div class="metric"><strong>Min (Last Yr Mo):</strong> ${minMonth ?? 'N/A'} CFS</div>
         <div class="metric"><strong>Max (5 Years):</strong> ${max5 ?? 'N/A'} CFS</div>
         <div class="metric"><strong>Min (5 Years):</strong> ${min5 ?? 'N/A'} CFS</div>
       `;
       dashboard.appendChild(tile);
     }
 
-    sites.forEach(site => fetchSiteData(site));
+    sites.forEach((site, index) => fetchSiteData(site, index));
     setInterval(() => {
       dashboard.innerHTML = '';
-      sites.forEach(site => fetchSiteData(site));
+      sites.forEach((site, index) => fetchSiteData(site, index));
     }, 3600000);
   </script>
 </body>
