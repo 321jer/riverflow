@@ -8,13 +8,15 @@
   <style>
     body {
       font-family: Arial, sans-serif;
-      background-color: #f4f9ff;
+      background-color: #121212;
+      color: #f4f4f4;
       margin: 0;
       padding: 1em;
     }
     h1 {
       text-align: center;
       margin-bottom: 1em;
+      color: #ffffff;
     }
     .grid {
       display: grid;
@@ -22,14 +24,15 @@
       gap: 1em;
     }
     .tile {
-      background: white;
+      background: #1e1e1e;
       border-radius: 10px;
       padding: 1em;
-      box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+      box-shadow: 0 2px 5px rgba(0,0,0,0.5);
     }
     .tile h2 {
       font-size: 1.2em;
       margin-bottom: 0.5em;
+      color: #90caf9;
     }
     .metric {
       margin: 0.2em 0;
@@ -42,14 +45,14 @@
 
   <script>
     const sites = [
-      { name: "Colorado River at Potash, UT", id: "09185600" },
-      { name: "Colorado River Near Cisco, UT", id: "09180500" },
-      { name: "Mill Creek Below Sheley Tunnel, Near Moab, UT", id: "09183600" },
-      { name: "Mill Creek Blw Pack Creek NR Mouth at Moab, UT", id: "09185100" },
-      { name: "North Fork Mill Creek Near Moab, Utah", id: "09183800" },
-      { name: "Logan River Above State Dam, Near Logan, UT", id: "10109000" },
-      { name: "Provo Riv at Riv Road Bridge NR Heber City, UT", id: "10155200" },
-      { name: "Green River at Green River, UT", id: "09315000" }
+      { name: "Colorado River @ Potash", id: "09185600" },
+      { name: "Colorado River @ Cisco", id: "09180500" },
+      { name: "Mill Creek @ Right Hand", id: "09183800" },
+      { name: "Mill Creek @ Faux Falls", id: "09183600" },
+      { name: "Mill Creek @ Wet Lands", id: "09185100" },
+      { name: "Green River", id: "09315000" },
+      { name: "Logan River", id: "10109000" },
+      { name: "Middle Provo River", id: "10155200" }
     ];
 
     const dashboard = document.getElementById('dashboard');
@@ -63,37 +66,40 @@
       const thisMonthLastYearEnd = new Date(now.getFullYear() - 1, now.getMonth() + 1, 0).toISOString().split('T')[0];
 
       const baseURL = "https://waterservices.usgs.gov/nwis/iv/?format=json&sites=" + site.id + "&parameterCd=00060,00010&siteStatus=all";
-      const statURL = (start, end, stat) => `https://nwis.waterservices.usgs.gov/nwis/dv/?format=json&sites=${site.id}&startDT=${start}&endDT=${end}&statCd=${stat}&parameterCd=00060`;
+      const dailyURL = (start, end) => `https://nwis.waterservices.usgs.gov/nwis/dv/?format=json&sites=${site.id}&startDT=${start}&endDT=${end}&parameterCd=00060&statCd=00003`;
 
       try {
-        const [currentRes, maxYearRes, minYearRes, maxMonthRes, minMonthRes, max5Res, min5Res] = await Promise.all([
+        const [currentRes, yearRes, monthRes, fiveRes] = await Promise.all([
           fetch(baseURL),
-          fetch(statURL(oneYearAgo, today, '00003')),
-          fetch(statURL(oneYearAgo, today, '00001')),
-          fetch(statURL(thisMonthLastYearStart, thisMonthLastYearEnd, '00003')),
-          fetch(statURL(thisMonthLastYearStart, thisMonthLastYearEnd, '00001')),
-          fetch(statURL(fiveYearsAgo, today, '00003')),
-          fetch(statURL(fiveYearsAgo, today, '00001')),
+          fetch(dailyURL(oneYearAgo, today)),
+          fetch(dailyURL(thisMonthLastYearStart, thisMonthLastYearEnd)),
+          fetch(dailyURL(fiveYearsAgo, today))
         ]);
 
         const currentData = await currentRes.json();
-        const extractValue = (res) => res.value.timeSeries[0]?.values[0]?.value[0]?.value || 'N/A';
+        const extractValue = (res) => res.value.timeSeries[0]?.values[0]?.value.map(v => parseFloat(v.value)).filter(v => !isNaN(v));
         const extractDate = (res) => res.value.timeSeries[0]?.values[0]?.value[0]?.dateTime || '';
 
-        const flow = extractValue(currentData);
-        const tempSeries = currentData.value.timeSeries.find(s => s.variable.variableCode[0].value === '00010');
-        const temp = tempSeries?.values[0]?.value[0]?.value || 'N/A';
+        const flow = currentData.value.timeSeries.find(s => s.variable.variableCode[0].value === '00060')?.values[0]?.value[0]?.value || 'N/A';
+        const tempC = currentData.value.timeSeries.find(s => s.variable.variableCode[0].value === '00010')?.values[0]?.value[0]?.value || null;
+        const tempF = tempC ? (parseFloat(tempC) * 9/5 + 32).toFixed(1) : 'N/A';
         const timestamp = extractDate(currentData);
 
-        const maxYear = extractValue(await maxYearRes.json());
-        const minYear = extractValue(await minYearRes.json());
-        const maxMonth = extractValue(await maxMonthRes.json());
-        const minMonth = extractValue(await minMonthRes.json());
-        const max5 = extractValue(await max5Res.json());
-        const min5 = extractValue(await min5Res.json());
+        const minOf = (arr) => arr.length ? Math.min(...arr).toFixed(2) : 'N/A';
 
-        renderTile(site.name, flow, timestamp, temp, maxYear, minYear, maxMonth, minMonth, max5, min5);
+        const yearData = extractValue(await yearRes.json());
+        const monthData = extractValue(await monthRes.json());
+        const fiveData = extractValue(await fiveRes.json());
 
+        const minYear = minOf(yearData);
+        const minMonth = minOf(monthData);
+        const min5 = minOf(fiveData);
+
+        const maxYear = yearData.length ? Math.max(...yearData).toFixed(2) : 'N/A';
+        const maxMonth = monthData.length ? Math.max(...monthData).toFixed(2) : 'N/A';
+        const max5 = fiveData.length ? Math.max(...fiveData).toFixed(2) : 'N/A';
+
+        renderTile(site.name, flow, timestamp, tempF, maxYear, minYear, maxMonth, minMonth, max5, min5);
       } catch (e) {
         console.error("Error fetching data for", site.name, e);
       }
@@ -107,7 +113,7 @@
       tile.innerHTML = `
         <h2>${name}</h2>
         <div class="metric"><strong>Flow:</strong> ${flow} CFS</div>
-        <div class="metric"><strong>Water Temp:</strong> ${temp} °C</div>
+        <div class="metric"><strong>Water Temp:</strong> ${temp} °F</div>
         <div class="metric"><strong>Updated:</strong> ${localTime}</div>
         <hr>
         <div class="metric"><strong>Max (Last Year):</strong> ${maxYear} CFS</div>
@@ -127,6 +133,7 @@
     }, 3600000);
   </script>
 </body>
+</html>
 </html>
 
 
