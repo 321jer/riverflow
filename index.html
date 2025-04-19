@@ -43,10 +43,7 @@
       font-weight: bold;
       color: #4dd0e1;
     }
-    .min {
-      color: #ffffff;
-    }
-    .max {
+    .min, .max {
       color: #ffffff;
     }
     .temp-range {
@@ -101,6 +98,10 @@
         ]);
 
         const currentData = await currentRes.json();
+        const yearJson = await yearRes.json();
+        const monthJson = await monthRes.json();
+        const fiveJson = await fiveRes.json();
+
         const extractValue = (res, code) => res.value.timeSeries.find(s => s.variable.variableCode[0].value === code)?.values[0]?.value.map(v => parseFloat(v.value)).filter(v => !isNaN(v)) || [];
         const extractDate = (res) => res.value.timeSeries[0]?.values[0]?.value[0]?.dateTime || '';
 
@@ -109,11 +110,11 @@
         const tempF = tempC ? (parseFloat(tempC) * 9/5 + 32).toFixed(1) : 'N/A';
         const timestamp = extractDate(currentData);
 
-        const yearData = extractValue(await yearRes.json(), '00060');
-        const monthData = extractValue(await monthRes.json(), '00060');
-        const fiveData = extractValue(await fiveRes.json(), '00060');
+        const yearData = extractValue(yearJson, '00060');
+        const monthData = extractValue(monthJson, '00060');
+        const fiveData = extractValue(fiveJson, '00060');
 
-        const yearTemps = extractValue(await yearRes.json(), '00010');
+        const yearTemps = extractValue(yearJson, '00010');
         const tempMinYear = yearTemps.length ? (Math.min(...yearTemps) * 9/5 + 32).toFixed(1) : null;
         const tempMaxYear = yearTemps.length ? (Math.max(...yearTemps) * 9/5 + 32).toFixed(1) : null;
 
@@ -179,6 +180,7 @@
     }, 3600000);
   </script>
 </body>
+</html>
 </html>
 
 
