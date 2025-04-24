@@ -28,6 +28,7 @@
       border-radius: 10px;
       padding: 1em;
       box-shadow: 0 2px 5px rgba(0,0,0,0.5);
+      order: var(--order);
     }
     .tile h2 {
       font-size: 1.2em;
@@ -65,7 +66,15 @@
 
   <script>
     const sites = [
-      { name: "Mill Creek @ Wet Lands", id: "09185100" }
+      { name: "Colorado River @ Potash", id: "09185600" },
+      { name: "Colorado River @ Cisco", id: "09180500" },
+      { name: "Mill Creek @ Left Hand", id: "09183800" },
+      { name: "Mill Creek @ Faux Falls", id: "09183600" },
+      { name: "Mill Creek @ Wet Lands", id: "09185100" },
+      { name: "Green River", id: "09315000" },
+      { name: "Hobble Creek", id: "10153100" },
+      { name: "Logan River", id: "10109000" },
+      { name: "Middle Provo River", id: "10155200" }
     ];
 
     const dashboard = document.getElementById('dashboard');
@@ -74,48 +83,81 @@
       const now = new Date();
       const today = now.toISOString().split('T')[0];
       const oneYearAgo = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate()).toISOString().split('T')[0];
-      const sameMonthLastYearStart = new Date(now.getFullYear() - 1, now.getMonth(), 1).toISOString().split('T')[0];
-      const sameMonthLastYearEnd = new Date(now.getFullYear() - 1, now.getMonth() + 1, 0).toISOString().split('T')[0];
-      const threeYearsAgo = new Date(now.getFullYear() - 3, now.getMonth(), now.getDate()).toISOString().split('T')[0];
+      const fiveYearsAgo = new Date(now.getFullYear() - 5, now.getMonth(), now.getDate()).toISOString().split('T')[0];
+      const thisMonthLastYearStart = new Date(now.getFullYear() - 1, now.getMonth(), 1).toISOString().split('T')[0];
+      const thisMonthLastYearEnd = new Date(now.getFullYear() - 1, now.getMonth() + 1, 0).toISOString().split('T')[0];
 
-      const ivURL = (start, end) =>
-        `https://waterservices.usgs.gov/nwis/iv/?format=json&sites=${site.id}&startDT=${start}&endDT=${end}&parameterCd=00060&siteStatus=all`;
+      const baseURL = `https://waterservices.usgs.gov/nwis/iv/?format=json&sites=${site.id}&parameterCd=00060,00010&siteStatus=all`;
+      const dailyURL = (start, end) => `https://nwis.waterservices.usgs.gov/nwis/dv/?format=json&sites=${site.id}&startDT=${start}&endDT=${end}&parameterCd=00060,00010&statCd=00003`;
 
       try {
-        const [yearRes, monthRes, threeRes] = await Promise.all([
-          fetch(ivURL(oneYearAgo, today)),
-          fetch(ivURL(sameMonthLastYearStart, sameMonthLastYearEnd)),
-          fetch(ivURL(threeYearsAgo, today))
+        const [currentRes, yearRes, monthRes, fiveRes] = await Promise.all([
+          fetch(baseURL),
+          fetch(dailyURL(oneYearAgo, today)),
+          fetch(dailyURL(thisMonthLastYearStart, thisMonthLastYearEnd)),
+          fetch(dailyURL(fiveYearsAgo, today))
         ]);
 
+        const currentData = await currentRes.json();
         const yearJson = await yearRes.json();
         const monthJson = await monthRes.json();
-        const threeJson = await threeRes.json();
+        const fiveJson = await fiveRes.json();
 
-        const extractValues = (res) => {
-          return res.value.timeSeries[0]?.values[0]?.value.map(v => parseFloat(v.value)).filter(v => !isNaN(v)) || [];
+        const extractValue = (res, code) => res.value.timeSeries.find(s => s.variable.variableCode[0].value === code)?.values[0]?.value.map(v => parseFloat(v.value)).filter(v => !isNaN(v)) || [];
+        const extractDate = (res) => res.value.timeSeries[0]?.values[0]?.value[0]?.dateTime || '';
+
+        const flow = currentData.value.timeSeries.find(s => s.variable.variableCode[0].value === '00060')?.values[0]?.value[0]?.value || 'N/A';
+        const tempC = currentData.value.timeSeries.find(s => s.variable.variableCode[0].value === '00010')?.values[0]?.value[0]?.value || null;
+        const tempF = tempC ? (parseFloat(tempC) * 9/5 + 32).toFixed(1) : 'N/A';
+        const timestamp = extractDate(currentData);
+
+        const yearData = extractValue(yearJson, '00060');
+        const monthData = extractValue(monthJson, '00060');
+        const fiveData = extractValue(fiveJson, '00060');
+
+        const yearTemps = extractValue(yearJson, '00010');
+        const tempMinYear = yearTemps.length ? (Math.min(...yearTemps) * 9/5 + 32).toFixed(1) : null;
+        const tempMaxYear = yearTemps.length ? (Math.max(...yearTemps) * 9/5 + 32).toFixed(1) : null;
+
+        const percentile = (arr, p) => {
+          if (!arr || !arr.length) return 'N/A';
+          const sorted = [...arr].sort((a, b) => a - b);
+          const idx = Math.floor(p * sorted.length);
+          return Math.round(sorted[idx]).toLocaleString();
         };
 
-        const max = (arr) => arr.length ? Math.max(...arr).toLocaleString() : 'N/A';
-        const min = (arr) => arr.length ? Math.min(...arr).toLocaleString() : 'N/A';
+        const getMax = (arr) => (arr && arr.length ? Math.round(Math.max(...arr)).toLocaleString() : 'N/A');
 
-        const yearValues = extractValues(yearJson);
-        const monthValues = extractValues(monthJson);
-        const threeValues = extractValues(threeJson);
+        const minYear = percentile(yearData, 0.1);
+        const minMonth = percentile(monthData, 0.1);
+        const min5 = percentile(fiveData, 0.1);
 
-        renderTile(site.name, max(yearValues), min(yearValues), max(monthValues), min(monthValues), max(threeValues), min(threeValues), index);
+        const maxYear = getMax(yearData);
+        const maxMonth = getMax(monthData);
+        const max5 = getMax(fiveData);
 
+        renderTile(site.name, flow, timestamp, tempF, tempMinYear, tempMaxYear, maxYear, minYear, maxMonth, minMonth, max5, min5, index);
       } catch (e) {
         console.error("Error fetching data for", site.name, e);
-        renderTile(site.name, 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', index);
+        renderTile(site.name, 'N/A', '', 'N/A', null, null, 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', index);
       }
     }
 
-    function renderTile(name, maxYear, minYear, maxMonth, minMonth, max3, min3, index) {
+    function renderTile(name, flow, timestamp, temp, tempMinYear, tempMaxYear, maxYear, minYear, maxMonth, minMonth, max5, min5, index) {
+      const localTime = timestamp ? new Date(timestamp).toLocaleString('en-US', { timeZone: 'America/Denver', hour: 'numeric', minute: '2-digit', month: 'short', day: 'numeric' }) : 'N/A';
+      const flowDisplay = flow !== 'N/A' ? parseFloat(flow).toLocaleString() : 'N/A';
+
+      const tempRange = tempMinYear && tempMaxYear ? `<span class="temp-range">(<span class="temp-min">${tempMinYear}°</span> - <span class="temp-max">${tempMaxYear}°</span>)</span>` : '';
+
       const tile = document.createElement('div');
       tile.className = 'tile';
+      tile.style.setProperty('--order', index);
       tile.innerHTML = `
         <h2>${name}</h2>
+        <div class="metric highlight-flow">${flowDisplay} CFS</div>
+        <div class="metric"><strong>Temp:</strong> ${temp ?? 'N/A'} °F ${tempRange}</div>
+        <div class="metric"><strong>Updated:</strong> ${localTime}</div>
+        <hr>
         <div class="metric-group">
           <div class="metric min"><strong>Min (Last Year):</strong> ${minYear} CFS</div>
           <div class="metric max"><strong>Max (Last Year):</strong> ${maxYear} CFS</div>
@@ -125,14 +167,18 @@
           <div class="metric max"><strong>Max (Last Yr Mo):</strong> ${maxMonth} CFS</div>
         </div>
         <div class="metric-group">
-          <div class="metric min"><strong>Min (3 Years):</strong> ${min3} CFS</div>
-          <div class="metric max"><strong>Max (3 Years):</strong> ${max3} CFS</div>
+          <div class="metric min"><strong>Min (5 Years):</strong> ${min5} CFS</div>
+          <div class="metric max"><strong>Max (5 Years):</strong> ${max5} CFS</div>
         </div>
       `;
       dashboard.appendChild(tile);
     }
 
     sites.forEach((site, index) => fetchSiteData(site, index));
+    setInterval(() => {
+      dashboard.innerHTML = '';
+      sites.forEach((site, index) => fetchSiteData(site, index));
+    }, 3600000);
   </script>
 </body>
 </html>
