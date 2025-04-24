@@ -174,18 +174,20 @@
         const currentYear = now.getFullYear();
         const currentMonth = now.getMonth();
         
-        // Get last year's data
-        const lastYearData = await fetchAnnualStats(site.id, currentYear - 1);
-        // Get data for same month last year
-        const lastYearMonthData = await fetchMonthlyStats(site.id, currentYear - 1, currentMonth);
-        // Get 5-year stats (2019-2023)
-        const fiveYearData = await fetchFiveYearStats(site.id, currentYear - 5, currentYear - 1);
+        // Get last year's min/max
+        const lastYear = await fetchMinMax(site.id, currentYear - 1);
+        
+        // Get same month last year min/max
+        const lastYearMonth = await fetchMonthMinMax(site.id, currentYear - 1, currentMonth);
+        
+        // Get 5-year min/max (from annual peaks)
+        const fiveYear = await fetchFiveYearPeaks(site.id, currentYear - 5, currentYear - 1);
         
         // Update the tile
         updateTileHistorical(site, {
-          lastYear: lastYearData,
-          lastYearMonth: lastYearMonthData,
-          lastFiveYears: fiveYearData
+          lastYear,
+          lastYearMonth,
+          fiveYear
         });
         
       } catch (error) {
@@ -196,59 +198,58 @@
       }
     }
 
-    async function fetchAnnualStats(siteId, year) {
-      const startDate = `${year}-01-01`;
-      const endDate = `${year}-12-31`;
-      const url = `https://waterservices.usgs.gov/nwis/stat/?format=json&sites=${siteId}&statReportType=annual&statYearType=water&startDT=${startDate}&endDT=${endDate}&parameterCd=00060`;
+    async function fetchMinMax(siteId, year) {
+      const url = `https://waterdata.usgs.gov/nwis/peak?site_no=${siteId}&range_selection=year_range&format=rdb&begin_date=${year}-01-01&end_date=${year}-12-31`;
+      const response = await fetch(url);
+      const text = await response.text();
+      
+      // Parse the RDB format
+      const lines = text.split('\n').filter(line => !line.startsWith('#') && line.trim() !== '');
+      if (lines.length < 2) return { min: 'N/A', max: 'N/A' };
+      
+      const headers = lines[0].split('\t');
+      const data = lines[1].split('\t');
+      
+      const peakIndex = headers.indexOf('peak_va');
+      const minIndex = headers.indexOf('min_va');
+      
+      return {
+        min: minIndex !== -1 && data[minIndex] ? Math.round(parseFloat(data[minIndex])).toLocaleString() : 'N/A',
+        max: peakIndex !== -1 && data[peakIndex] ? Math.round(parseFloat(data[peakIndex])).toLocaleString() : 'N/A'
+      };
+    }
+
+    async function fetchMonthMinMax(siteId, year, month) {
+      const monthStart = new Date(year, month, 1);
+      const monthEnd = new Date(year, month + 1, 0);
+      const url = `https://nwis.waterservices.usgs.gov/nwis/dv/?format=json&sites=${siteId}&startDT=${formatDate(monthStart)}&endDT=${formatDate(monthEnd)}&parameterCd=00060&statCd=00001,00002`;
       
       const response = await fetch(url);
       const data = await response.json();
       
-      if (!data.value?.timeSeries?.[0]?.values?.[0]?.value) {
+      if (!data.value?.timeSeries?.[0]?.values) {
         return { min: 'N/A', max: 'N/A' };
       }
       
-      const stats = data.value.timeSeries[0].values[0].value[0];
+      const minValues = data.value.timeSeries[0].values.find(v => v.method.methodID === '00001');
+      const maxValues = data.value.timeSeries[0].values.find(v => v.method.methodID === '00002');
+      
       return {
-        min: stats.min_va ? Math.round(stats.min_va).toLocaleString() : 'N/A',
-        max: stats.max_va ? Math.round(stats.max_va).toLocaleString() : 'N/A'
+        min: minValues?.value?.[0]?.value ? Math.round(parseFloat(minValues.value[0].value)).toLocaleString() : 'N/A',
+        max: maxValues?.value?.[0]?.value ? Math.round(parseFloat(maxValues.value[0].value)).toLocaleString() : 'N/A'
       };
     }
 
-    async function fetchMonthlyStats(siteId, year, month) {
-      const monthNames = ["January", "February", "March", "April", "May", "June",
-                         "July", "August", "September", "October", "November", "December"];
-      const url = `https://waterservices.usgs.gov/nwis/stat/?format=json&sites=${siteId}&statReportType=monthly&statYearType=water&parameterCd=00060`;
-      
-      const response = await fetch(url);
-      const data = await response.json();
-      
-      if (!data.value?.timeSeries?.[0]?.values?.[0]?.value) {
-        return { min: 'N/A', max: 'N/A' };
-      }
-      
-      // Find the stats for the specific month and year
-      const monthData = data.value.timeSeries[0].values[0].value.find(v => 
-        v.month_nu === month + 1 && v.year_nu === year);
-      
-      return {
-        min: monthData?.min_va ? Math.round(monthData.min_va).toLocaleString() : 'N/A',
-        max: monthData?.max_va ? Math.round(monthData.max_va).toLocaleString() : 'N/A'
-      };
-    }
-
-    async function fetchFiveYearStats(siteId, startYear, endYear) {
-      // Get annual stats for each year and calculate overall min/max
+    async function fetchFiveYearPeaks(siteId, startYear, endYear) {
       const years = Array.from({length: endYear - startYear + 1}, (_, i) => startYear + i);
-      const allStats = await Promise.all(years.map(year => fetchAnnualStats(siteId, year)));
+      const peaks = await Promise.all(years.map(year => fetchMinMax(siteId, year)));
       
-      // Extract all min and max values
-      const minValues = allStats.map(s => s.min === 'N/A' ? null : parseInt(s.min.replace(/,/g, ''))).filter(v => v !== null);
-      const maxValues = allStats.map(s => s.max === 'N/A' ? null : parseInt(s.max.replace(/,/g, ''))).filter(v => v !== null);
+      const validPeaks = peaks.filter(p => p.max !== 'N/A').map(p => parseInt(p.max.replace(/,/g, '')));
+      const validMins = peaks.filter(p => p.min !== 'N/A').map(p => parseInt(p.min.replace(/,/g, '')));
       
       return {
-        min: minValues.length ? Math.min(...minValues).toLocaleString() : 'N/A',
-        max: maxValues.length ? Math.max(...maxValues).toLocaleString() : 'N/A'
+        min: validMins.length ? Math.min(...validMins).toLocaleString() : 'N/A',
+        max: validPeaks.length ? Math.max(...validPeaks).toLocaleString() : 'N/A'
       };
     }
 
@@ -278,7 +279,7 @@
       tile.classList.remove('loading');
     }
 
-    function updateTileHistorical(site, { lastYear, lastYearMonth, lastFiveYears, error }) {
+    function updateTileHistorical(site, { lastYear, lastYearMonth, fiveYear, error }) {
       const tile = document.getElementById(`tile-${site.id}`);
       if (!tile) return;
       
@@ -307,15 +308,22 @@
         updateIfExists('.metric-group:nth-child(6) .max', `Max (Last Yr Mo): ${lastYearMonth.max} CFS`);
       }
       
-      if (lastFiveYears) {
-        updateIfExists('.metric-group:nth-child(7) .min', `Min (5 Years): ${lastFiveYears.min} CFS`);
-        updateIfExists('.metric-group:nth-child(7) .max', `Max (5 Years): ${lastFiveYears.max} CFS`);
+      if (fiveYear) {
+        updateIfExists('.metric-group:nth-child(7) .min', `Min (5 Years): ${fiveYear.min} CFS`);
+        updateIfExists('.metric-group:nth-child(7) .max', `Max (5 Years): ${fiveYear.max} CFS`);
       }
+    }
+
+    function formatDate(date) {
+      return date.toISOString().split('T')[0];
     }
 
     // Initialize
     fetchData();
     setInterval(fetchData, 3600000); // Refresh every hour
+  </script>
+</body>
+</html>
   </script>
 </body>
 </html>
