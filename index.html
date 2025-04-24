@@ -1,8 +1,8 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Utah River Flow Dashboard</title>
   <meta http-equiv="refresh" content="3600">
   <style>
@@ -28,6 +28,7 @@
       border-radius: 10px;
       padding: 1em;
       box-shadow: 0 2px 5px rgba(0,0,0,0.5);
+      order: var(--order);
     }
     .tile h2 {
       font-size: 1.2em;
@@ -41,6 +42,9 @@
       font-size: 1.6em;
       font-weight: bold;
       color: #4dd0e1;
+    }
+    .min, .max {
+      color: #ffffff;
     }
     .temp-range {
       font-size: 0.9em;
@@ -78,44 +82,74 @@
     async function fetchSiteData(site, index) {
       const now = new Date();
       const today = now.toISOString().split('T')[0];
+      const oneYearAgo = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate()).toISOString().split('T')[0];
       const threeYearsAgo = new Date(now.getFullYear() - 3, now.getMonth(), now.getDate()).toISOString().split('T')[0];
-      const fifteenMinIntervalURL = (start, end) => `https://nwis.waterservices.usgs.gov/nwis/iv/?format=json&sites=${site.id}&parameterCd=00060,00010&startDT=${start}&endDT=${end}&interval=15`;
+      const thisMonthLastYearStart = new Date(now.getFullYear() - 1, now.getMonth(), 1).toISOString().split('T')[0];
+      const thisMonthLastYearEnd = new Date(now.getFullYear() - 1, now.getMonth() + 1, 0).toISOString().split('T')[0];
 
       const baseURL = `https://waterservices.usgs.gov/nwis/iv/?format=json&sites=${site.id}&parameterCd=00060,00010&siteStatus=all`;
+      const dailyURL = (start, end) => `https://nwis.waterservices.usgs.gov/nwis/dv/?format=json&sites=${site.id}&startDT=${start}&endDT=${end}&parameterCd=00060,00010&statCd=00003`;
+      const instURL = (start, end) => `https://waterservices.usgs.gov/nwis/iv/?format=json&sites=${site.id}&startDT=${start}&endDT=${end}&parameterCd=00060&siteStatus=all`;
 
       try {
-        const [currentRes, intervalRes] = await Promise.all([
+        const [currentRes, yearRes, monthRes, threeRes] = await Promise.all([
           fetch(baseURL),
-          fetch(fifteenMinIntervalURL(threeYearsAgo, today))
+          fetch(dailyURL(oneYearAgo, today)),
+          fetch(dailyURL(thisMonthLastYearStart, thisMonthLastYearEnd)),
+          fetch(instURL(threeYearsAgo, today))
         ]);
 
         const currentData = await currentRes.json();
-        const intervalData = await intervalRes.json();
+        const yearJson = await yearRes.json();
+        const monthJson = await monthRes.json();
+        const threeJson = await threeRes.json();
+
+        const extractValue = (res, code) => res.value.timeSeries.find(s => s.variable.variableCode[0].value === code)?.values[0]?.value.map(v => parseFloat(v.value)).filter(v => !isNaN(v)) || [];
+        const extractDate = (res) => res.value.timeSeries[0]?.values[0]?.value[0]?.dateTime || '';
 
         const flow = currentData.value.timeSeries.find(s => s.variable.variableCode[0].value === '00060')?.values[0]?.value[0]?.value || 'N/A';
         const tempC = currentData.value.timeSeries.find(s => s.variable.variableCode[0].value === '00010')?.values[0]?.value[0]?.value || null;
         const tempF = tempC ? (parseFloat(tempC) * 9/5 + 32).toFixed(1) : 'N/A';
-        const timestamp = intervalData.value.timeSeries[0]?.values[0]?.value[0]?.dateTime || '';
+        const timestamp = extractDate(currentData);
 
-        const flowData = intervalData.value.timeSeries.find(s => s.variable.variableCode[0].value === '00060')?.values[0]?.value.map(v => parseFloat(v.value)).filter(v => !isNaN(v)) || [];
-        const tempData = intervalData.value.timeSeries.find(s => s.variable.variableCode[0].value === '00010')?.values[0]?.value.map(v => parseFloat(v.value)) || [];
+        const yearData = extractValue(yearJson, '00060');
+        const monthData = extractValue(monthJson, '00060');
+        const threeYearInstData = extractValue(threeJson, '00060');
 
-        const maxFlow = flowData.length ? Math.max(...flowData) : 'N/A';
-        const minFlow = flowData.length ? Math.min(...flowData) : 'N/A';
+        const yearTemps = extractValue(yearJson, '00010');
+        const tempMinYear = yearTemps.length ? (Math.min(...yearTemps) * 9/5 + 32).toFixed(1) : null;
+        const tempMaxYear = yearTemps.length ? (Math.max(...yearTemps) * 9/5 + 32).toFixed(1) : null;
 
-        const maxTemp = tempData.length ? (Math.max(...tempData) * 9/5 + 32).toFixed(1) : 'N/A';
-        const minTemp = tempData.length ? (Math.min(...tempData) * 9/5 + 32).toFixed(1) : 'N/A';
+        const percentile = (arr, p) => {
+          if (!arr || !arr.length) return 'N/A';
+          const sorted = [...arr].sort((a, b) => a - b);
+          const idx = Math.floor(p * sorted.length);
+          return Math.round(sorted[idx]).toLocaleString();
+        };
 
-        renderTile(site.name, flow, timestamp, tempF, minTemp, maxTemp, maxFlow, minFlow, index);
+        const getMax = (arr) => (arr && arr.length ? Math.round(Math.max(...arr)).toLocaleString() : 'N/A');
+
+        const minYear = percentile(yearData, 0.1);
+        const maxYear = getMax(yearData);
+
+        const minMonth = percentile(monthData, 0.1);
+        const maxMonth = getMax(monthData);
+
+        const min3 = percentile(threeYearInstData, 0.1);
+        const max3 = getMax(threeYearInstData);
+
+        renderTile(site.name, flow, timestamp, tempF, tempMinYear, tempMaxYear, maxYear, minYear, maxMonth, minMonth, max3, min3, index);
       } catch (e) {
         console.error("Error fetching data for", site.name, e);
-        renderTile(site.name, 'N/A', '', 'N/A', null, null, 'N/A', 'N/A', index);
+        renderTile(site.name, 'N/A', '', 'N/A', null, null, 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', index);
       }
     }
 
-    function renderTile(name, flow, timestamp, temp, tempMin, tempMax, flowMax, flowMin, index) {
+    function renderTile(name, flow, timestamp, temp, tempMinYear, tempMaxYear, maxYear, minYear, maxMonth, minMonth, max3, min3, index) {
       const localTime = timestamp ? new Date(timestamp).toLocaleString('en-US', { timeZone: 'America/Denver', hour: 'numeric', minute: '2-digit', month: 'short', day: 'numeric' }) : 'N/A';
       const flowDisplay = flow !== 'N/A' ? parseFloat(flow).toLocaleString() : 'N/A';
+
+      const tempRange = tempMinYear && tempMaxYear ? `<span class="temp-range">(<span class="temp-min">${tempMinYear}°</span> - <span class="temp-max">${tempMaxYear}°</span>)</span>` : '';
 
       const tile = document.createElement('div');
       tile.className = 'tile';
@@ -123,16 +157,20 @@
       tile.innerHTML = `
         <h2>${name}</h2>
         <div class="metric highlight-flow">${flowDisplay} CFS</div>
-        <div class="metric"><strong>Temp:</strong> ${temp ?? 'N/A'} °F</div>
+        <div class="metric"><strong>Temp:</strong> ${temp ?? 'N/A'} °F ${tempRange}</div>
         <div class="metric"><strong>Updated:</strong> ${localTime}</div>
         <hr>
         <div class="metric-group">
-          <div class="metric min"><strong>Min Flow (3 Years):</strong> ${flowMin} CFS</div>
-          <div class="metric max"><strong>Max Flow (3 Years):</strong> ${flowMax} CFS</div>
+          <div class="metric min"><strong>Min (Last Year):</strong> ${minYear} CFS</div>
+          <div class="metric max"><strong>Max (Last Year):</strong> ${maxYear} CFS</div>
         </div>
         <div class="metric-group">
-          <div class="metric min"><strong>Min Temp (3 Years):</strong> ${tempMin} °F</div>
-          <div class="metric max"><strong>Max Temp (3 Years):</strong> ${tempMax} °F</div>
+          <div class="metric min"><strong>Min (Last Yr Mo):</strong> ${minMonth} CFS</div>
+          <div class="metric max"><strong>Max (Last Yr Mo):</strong> ${maxMonth} CFS</div>
+        </div>
+        <div class="metric-group">
+          <div class="metric min"><strong>Min (3 Yr Inst):</strong> ${min3} CFS</div>
+          <div class="metric max"><strong>Max (3 Yr Inst):</strong> ${max3} CFS</div>
         </div>
       `;
       dashboard.appendChild(tile);
