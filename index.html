@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Utah River Flow Dashboard</title>
-  <meta http-equiv="refresh" content="300"> <!-- Refresh every 5 minutes -->
+  <meta http-equiv="refresh" content="3600">
   <style>
     body {
       font-family: Arial, sans-serif;
@@ -29,24 +29,6 @@
       padding: 1em;
       box-shadow: 0 2px 5px rgba(0,0,0,0.5);
       order: var(--order);
-      border-left: 5px solid #1e1e1e;
-    }
-    .tile.flood-warning {
-      border-left: 5px solid #ef5350;
-      background: #2a1a1a;
-      animation: pulse 2s infinite;
-    }
-    .tile.flood-stage {
-      border-left: 5px solid #ffa726;
-      background: #2a231a;
-    }
-    .tile.normal {
-      border-left: 5px solid #66bb6a;
-    }
-    @keyframes pulse {
-      0% { box-shadow: 0 0 0 0 rgba(239, 83, 80, 0.4); }
-      70% { box-shadow: 0 0 0 10px rgba(239, 83, 80, 0); }
-      100% { box-shadow: 0 0 0 0 rgba(239, 83, 80, 0); }
     }
     .tile h2 {
       font-size: 1.2em;
@@ -59,30 +41,22 @@
     .highlight-flow {
       font-size: 1.6em;
       font-weight: bold;
+      color: #4dd0e1;
     }
-    .flood-status {
-      font-weight: bold;
-      font-size: 1.2em;
-      margin: 0.5em 0;
-      padding: 0.3em;
-      border-radius: 4px;
-      text-align: center;
+    .min, .max {
+      color: #ffffff;
     }
-    .flood-warning .flood-status {
-      background-color: #d32f2f;
-      color: white;
+    .temp-range {
+      font-size: 0.9em;
     }
-    .flood-stage .flood-status {
-      background-color: #fb8c00;
-      color: white;
+    .temp-min {
+      color: #64b5f6;
     }
-    .normal .flood-status {
-      background-color: #388e3c;
-      color: white;
+    .temp-max {
+      color: #ef5350;
     }
-    .last-updated {
-      font-size: 0.8em;
-      color: #b0bec5;
+    .metric-group {
+      margin-top: 1.25em;
     }
   </style>
 </head>
@@ -91,107 +65,121 @@
   <div class="grid" id="dashboard"></div>
 
   <script>
-    // Enhanced with flood stage information
     const sites = [
-      { name: "Colorado River @ Potash", id: "09185600", floodStage: 20000, floodWarning: 25000 },
-      { name: "Colorado River @ Cisco", id: "09180500", floodStage: 30000, floodWarning: 35000 },
-      { name: "Mill Creek @ Left Hand", id: "09183800", floodStage: 500, floodWarning: 700 },
-      { name: "Mill Creek @ Faux Falls", id: "09183600", floodStage: 400, floodWarning: 600 },
-      { name: "Mill Creek @ Wet Lands", id: "09185100", floodStage: 300, floodWarning: 500 },
-      { name: "Green River", id: "09315000", floodStage: 12000, floodWarning: 15000 },
-      { name: "Hobble Creek", id: "10153100", floodStage: 300, floodWarning: 500 },
-      { name: "Logan River", id: "10109000", floodStage: 800, floodWarning: 1000 },
-      { name: "Middle Provo River", id: "10155200", floodStage: 600, floodWarning: 800 }
+      { name: "Colorado River @ Potash", id: "09185600" },
+      { name: "Colorado River @ Cisco", id: "09180500" },
+      { name: "Mill Creek @ Left Hand", id: "09183800" },
+      { name: "Mill Creek @ Faux Falls", id: "09183600" },
+      { name: "Mill Creek @ Wet Lands", id: "09185100" },
+      { name: "Green River", id: "09315000" },
+      { name: "Hobble Creek", id: "10153100" },
+      { name: "Logan River", id: "10109000" },
+      { name: "Middle Provo River", id: "10155200" }
     ];
 
     const dashboard = document.getElementById('dashboard');
 
     async function fetchSiteData(site, index) {
+      const now = new Date();
+      const today = now.toISOString().split('T')[0];
+      const oneYearAgo = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate()).toISOString().split('T')[0];
+      const fiveYearsAgo = new Date(now.getFullYear() - 5, now.getMonth(), now.getDate()).toISOString().split('T')[0];
+      const thisMonthLastYearStart = new Date(now.getFullYear() - 1, now.getMonth(), 1).toISOString().split('T')[0];
+      const thisMonthLastYearEnd = new Date(now.getFullYear() - 1, now.getMonth() + 1, 0).toISOString().split('T')[0];
+
+      // Current data (instantaneous values)
+      const currentURL = `https://waterservices.usgs.gov/nwis/iv/?format=json&sites=${site.id}&parameterCd=00060,00010&siteStatus=all`;
+      
+      // Historical data (all instantaneous values for the periods)
+      const yearURL = `https://waterservices.usgs.gov/nwis/iv/?format=json&sites=${site.id}&startDT=${oneYearAgo}&endDT=${today}&parameterCd=00060&siteStatus=all`;
+      const monthURL = `https://waterservices.usgs.gov/nwis/iv/?format=json&sites=${site.id}&startDT=${thisMonthLastYearStart}&endDT=${thisMonthLastYearEnd}&parameterCd=00060&siteStatus=all`;
+      const fiveYearURL = `https://waterservices.usgs.gov/nwis/iv/?format=json&sites=${site.id}&startDT=${fiveYearsAgo}&endDT=${today}&parameterCd=00060&siteStatus=all`;
+
       try {
-        // Only use instantaneous values service for real-time data
-        const url = `https://waterservices.usgs.gov/nwis/iv/?format=json&sites=${site.id}&parameterCd=00060,00010&siteStatus=all`;
-        const response = await fetch(url);
-        const data = await response.json();
+        const [currentRes, yearRes, monthRes, fiveRes] = await Promise.all([
+          fetch(currentURL),
+          fetch(yearURL),
+          fetch(monthURL),
+          fetch(fiveYearURL)
+        ]);
 
-        // Extract current flow and temperature
-        const flowSeries = data.value.timeSeries.find(s => s.variable.variableCode[0].value === '00060');
-        const tempSeries = data.value.timeSeries.find(s => s.variable.variableCode[0].value === '00010');
-        
-        const flowValue = flowSeries?.values[0]?.value[0]?.value || 'N/A';
-        const tempValue = tempSeries?.values[0]?.value[0]?.value || null;
-        const timestamp = flowSeries?.values[0]?.value[0]?.dateTime || '';
-        
-        // Convert temperature to Fahrenheit if available
-        const tempF = tempValue ? (parseFloat(tempValue) * 9/5 + 32).toFixed(1) : 'N/A';
-        
-        // Determine flood status
-        let status = 'normal';
-        let statusText = 'Normal Flow';
-        const numericFlow = parseFloat(flowValue);
-        
-        if (!isNaN(numericFlow)) {
-          if (site.floodWarning && numericFlow >= site.floodWarning) {
-            status = 'flood-warning';
-            statusText = 'FLOOD WARNING!';
-          } else if (site.floodStage && numericFlow >= site.floodStage) {
-            status = 'flood-stage';
-            statusText = 'Flood Stage';
-          }
-        }
+        const currentData = await currentRes.json();
+        const yearData = await yearRes.json();
+        const monthData = await monthRes.json();
+        const fiveData = await fiveRes.json();
 
-        renderTile(site, flowValue, tempF, timestamp, status, statusText, index);
+        // Helper function to extract all instantaneous flow values
+        const extractFlowValues = (data) => {
+          const flowSeries = data.value.timeSeries.find(s => s.variable.variableCode[0].value === '00060');
+          return flowSeries?.values[0]?.value.map(v => parseFloat(v.value)).filter(v => !isNaN(v)) || [];
+        };
+
+        // Current values
+        const flow = currentData.value.timeSeries.find(s => s.variable.variableCode[0].value === '00060')?.values[0]?.value[0]?.value || 'N/A';
+        const tempC = currentData.value.timeSeries.find(s => s.variable.variableCode[0].value === '00010')?.values[0]?.value[0]?.value || null;
+        const tempF = tempC ? (parseFloat(tempC) * 9/5 + 32).toFixed(1) : 'N/A';
+        const timestamp = currentData.value.timeSeries[0]?.values[0]?.value[0]?.dateTime || '';
+
+        // Historical values (instantaneous)
+        const yearFlows = extractFlowValues(yearData);
+        const monthFlows = extractFlowValues(monthData);
+        const fiveFlows = extractFlowValues(fiveData);
+
+        // Calculate min/max values
+        const getMin = (arr) => arr.length ? Math.round(Math.min(...arr)).toLocaleString() : 'N/A';
+        const getMax = (arr) => arr.length ? Math.round(Math.max(...arr)).toLocaleString() : 'N/A';
+
+        const minYear = getMin(yearFlows);
+        const maxYear = getMax(yearFlows);
+        const minMonth = getMin(monthFlows);
+        const maxMonth = getMax(monthFlows);
+        const min5 = getMin(fiveFlows);
+        const max5 = getMax(fiveFlows);
+
+        renderTile(site.name, flow, timestamp, tempF, maxYear, minYear, maxMonth, minMonth, max5, min5, index);
       } catch (e) {
         console.error("Error fetching data for", site.name, e);
-        renderTile(site, 'N/A', 'N/A', '', 'normal', 'Data Unavailable', index);
+        renderTile(site.name, 'N/A', '', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', index);
       }
     }
 
-    function renderTile(site, flow, temp, timestamp, statusClass, statusText, index) {
-      const localTime = timestamp ? new Date(timestamp).toLocaleString('en-US', { 
-        timeZone: 'America/Denver', 
-        hour: 'numeric', 
-        minute: '2-digit', 
-        second: '2-digit',
-        month: 'short', 
-        day: 'numeric' 
-      }) : 'N/A';
-      
-      const flowDisplay = flow !== 'N/A' ? parseFloat(flow).toLocaleString() + ' CFS' : 'N/A';
-      const flowColor = statusClass === 'flood-warning' ? '#ef5350' : 
-                       statusClass === 'flood-stage' ? '#ffa726' : '#4dd0e1';
+    function renderTile(name, flow, timestamp, temp, maxYear, minYear, maxMonth, minMonth, max5, min5, index) {
+      const localTime = timestamp ? new Date(timestamp).toLocaleString('en-US', { timeZone: 'America/Denver', hour: 'numeric', minute: '2-digit', month: 'short', day: 'numeric' }) : 'N/A';
+      const flowDisplay = flow !== 'N/A' ? parseFloat(flow).toLocaleString() : 'N/A';
 
       const tile = document.createElement('div');
-      tile.className = `tile ${statusClass}`;
+      tile.className = 'tile';
       tile.style.setProperty('--order', index);
       tile.innerHTML = `
-        <h2>${site.name}</h2>
-        <div class="flood-status">${statusText}</div>
-        <div class="metric highlight-flow" style="color: ${flowColor}">${flowDisplay}</div>
+        <h2>${name}</h2>
+        <div class="metric highlight-flow">${flowDisplay} CFS</div>
         <div class="metric"><strong>Temp:</strong> ${temp} °F</div>
-        <div class="metric"><strong>Flood Stage:</strong> ${site.floodStage?.toLocaleString() || 'N/A'} CFS</div>
-        <div class="metric"><strong>Flood Warning:</strong> ${site.floodWarning?.toLocaleString() || 'N/A'} CFS</div>
-        <div class="metric last-updated">Updated: ${localTime}</div>
+        <div class="metric"><strong>Updated:</strong> ${localTime}</div>
+        <hr>
+        <div class="metric-group">
+          <div class="metric min"><strong>Min (Last Year):</strong> ${minYear} CFS</div>
+          <div class="metric max"><strong>Max (Last Year):</strong> ${maxYear} CFS</div>
+        </div>
+        <div class="metric-group">
+          <div class="metric min"><strong>Min (Last Yr Mo):</strong> ${minMonth} CFS</div>
+          <div class="metric max"><strong>Max (Last Yr Mo):</strong> ${maxMonth} CFS</div>
+        </div>
+        <div class="metric-group">
+          <div class="metric min"><strong>Min (5 Years):</strong> ${min5} CFS</div>
+          <div class="metric max"><strong>Max (5 Years):</strong> ${max5} CFS</div>
+        </div>
       `;
-      
-      // Replace or add the tile
-      const existingTile = document.querySelector(`.tile[data-site-id="${site.id}"]`);
-      if (existingTile) {
-        existingTile.replaceWith(tile);
-      } else {
-        tile.setAttribute('data-site-id', site.id);
-        dashboard.appendChild(tile);
-      }
+      dashboard.appendChild(tile);
     }
 
-    // Initial load
     sites.forEach((site, index) => fetchSiteData(site, index));
-    
-    // Update every 5 minutes (300000 ms)
     setInterval(() => {
+      dashboard.innerHTML = '';
       sites.forEach((site, index) => fetchSiteData(site, index));
-    }, 300000);
+    }, 3600000);
   </script>
 </body>
+</html>
 </html>
 </body>
 </html>
