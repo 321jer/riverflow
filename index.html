@@ -87,15 +87,14 @@
       const thisMonthLastYearStart = new Date(now.getFullYear() - 1, now.getMonth(), 1).toISOString().split('T')[0];
       const thisMonthLastYearEnd = new Date(now.getFullYear() - 1, now.getMonth() + 1, 0).toISOString().split('T')[0];
 
-      const baseURL = `https://waterservices.usgs.gov/nwis/iv/?format=json&sites=${site.id}&parameterCd=00060,00010&siteStatus=all`;
-      const dailyURL = (start, end) => `https://nwis.waterservices.usgs.gov/nwis/dv/?format=json&sites=${site.id}&startDT=${start}&endDT=${end}&parameterCd=00060,00010&statCd=00003`;
+      const ivURL = (start, end) => `https://nwis.waterservices.usgs.gov/nwis/iv/?format=json&sites=${site.id}&startDT=${start}&endDT=${end}&parameterCd=00060,00010`;
 
       try {
         const [currentRes, yearRes, monthRes, fiveRes] = await Promise.all([
-          fetch(baseURL),
-          fetch(dailyURL(oneYearAgo, today)),
-          fetch(dailyURL(thisMonthLastYearStart, thisMonthLastYearEnd)),
-          fetch(dailyURL(fiveYearsAgo, today))
+          fetch(ivURL(today, today)),
+          fetch(ivURL(oneYearAgo, today)),
+          fetch(ivURL(thisMonthLastYearStart, thisMonthLastYearEnd)),
+          fetch(ivURL(fiveYearsAgo, today))
         ]);
 
         const currentData = await currentRes.json();
@@ -182,3 +181,4 @@
   </script>
 </body>
 </html>
+
