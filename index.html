@@ -28,7 +28,6 @@
       border-radius: 10px;
       padding: 1em;
       box-shadow: 0 2px 5px rgba(0,0,0,0.5);
-      order: var(--order);
     }
     .tile h2 {
       font-size: 1.2em;
@@ -66,102 +65,74 @@
 
   <script>
     const sites = [
-      { name: "Colorado River @ Potash", id: "09185600" },
-      { name: "Colorado River @ Cisco", id: "09180500" },
-      { name: "Mill Creek @ Left Hand", id: "09183800" },
-      { name: "Mill Creek @ Faux Falls", id: "09183600" },
-      { name: "Mill Creek @ Wet Lands", id: "09185100" },
-      { name: "Green River", id: "09315000" },
-      { name: "Hobble Creek", id: "10153100" },
-      { name: "Logan River", id: "10109000" },
-      { name: "Middle Provo River", id: "10155200" }
+      { name: "Mill Creek @ Wet Lands", id: "09185100" }
     ];
 
     const dashboard = document.getElementById('dashboard');
 
-    async function fetchInstantaneousData(siteId, startDate, endDate) {
-      const formatDate = date => date.toISOString().split('T')[0];
-      const url = `https://waterservices.usgs.gov/nwis/iv/?format=json&sites=${siteId}&parameterCd=00060&startDT=${formatDate(startDate)}&endDT=${formatDate(endDate)}&siteStatus=all`;
-
-      try {
-        const res = await fetch(url);
-        const data = await res.json();
-        const values = data.value.timeSeries[0]?.values[0]?.value.map(v => parseFloat(v.value)).filter(v => !isNaN(v)) || [];
-        return {
-          min: values.length ? Math.min(...values).toFixed(1) : 'N/A',
-          max: values.length ? Math.max(...values).toFixed(1) : 'N/A'
-        };
-      } catch (e) {
-        console.error("Instantaneous data fetch failed", e);
-        return { min: 'N/A', max: 'N/A' };
-      }
-    }
-
     async function fetchSiteData(site, index) {
       const now = new Date();
       const today = now.toISOString().split('T')[0];
-      const oneYearAgo = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate());
-      const thisMonthLastYearStart = new Date(now.getFullYear() - 1, now.getMonth(), 1);
-      const thisMonthLastYearEnd = new Date(now.getFullYear() - 1, now.getMonth() + 1, 0);
-      const threeYearsAgo = new Date(now.getFullYear() - 3, now.getMonth(), now.getDate());
+      const oneYearAgo = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate()).toISOString().split('T')[0];
+      const sameMonthLastYearStart = new Date(now.getFullYear() - 1, now.getMonth(), 1).toISOString().split('T')[0];
+      const sameMonthLastYearEnd = new Date(now.getFullYear() - 1, now.getMonth() + 1, 0).toISOString().split('T')[0];
+      const threeYearsAgo = new Date(now.getFullYear() - 3, now.getMonth(), now.getDate()).toISOString().split('T')[0];
 
-      const baseURL = `https://waterservices.usgs.gov/nwis/iv/?format=json&sites=${site.id}&parameterCd=00060,00010&siteStatus=all`;
+      const ivURL = (start, end) =>
+        `https://waterservices.usgs.gov/nwis/iv/?format=json&sites=${site.id}&startDT=${start}&endDT=${end}&parameterCd=00060&siteStatus=all`;
 
       try {
-        const [currentRes, yearMinMax, monthMinMax, threeYearMinMax] = await Promise.all([
-          fetch(baseURL),
-          fetchInstantaneousData(site.id, oneYearAgo, now),
-          fetchInstantaneousData(site.id, thisMonthLastYearStart, thisMonthLastYearEnd),
-          fetchInstantaneousData(site.id, threeYearsAgo, now)
+        const [yearRes, monthRes, threeRes] = await Promise.all([
+          fetch(ivURL(oneYearAgo, today)),
+          fetch(ivURL(sameMonthLastYearStart, sameMonthLastYearEnd)),
+          fetch(ivURL(threeYearsAgo, today))
         ]);
 
-        const currentData = await currentRes.json();
-        const flow = currentData.value.timeSeries.find(s => s.variable.variableCode[0].value === '00060')?.values[0]?.value[0]?.value || 'N/A';
-        const tempC = currentData.value.timeSeries.find(s => s.variable.variableCode[0].value === '00010')?.values[0]?.value[0]?.value || null;
-        const tempF = tempC ? (parseFloat(tempC) * 9/5 + 32).toFixed(1) : 'N/A';
-        const timestamp = currentData.value.timeSeries[0]?.values[0]?.value[0]?.dateTime || '';
+        const yearJson = await yearRes.json();
+        const monthJson = await monthRes.json();
+        const threeJson = await threeRes.json();
 
-        renderTile(site.name, flow, timestamp, tempF, yearMinMax, monthMinMax, threeYearMinMax, index);
+        const extractValues = (res) => {
+          return res.value.timeSeries[0]?.values[0]?.value.map(v => parseFloat(v.value)).filter(v => !isNaN(v)) || [];
+        };
+
+        const max = (arr) => arr.length ? Math.max(...arr).toLocaleString() : 'N/A';
+        const min = (arr) => arr.length ? Math.min(...arr).toLocaleString() : 'N/A';
+
+        const yearValues = extractValues(yearJson);
+        const monthValues = extractValues(monthJson);
+        const threeValues = extractValues(threeJson);
+
+        renderTile(site.name, max(yearValues), min(yearValues), max(monthValues), min(monthValues), max(threeValues), min(threeValues), index);
+
       } catch (e) {
         console.error("Error fetching data for", site.name, e);
-        renderTile(site.name, 'N/A', '', 'N/A', {}, {}, {}, index);
+        renderTile(site.name, 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', index);
       }
     }
 
-    function renderTile(name, flow, timestamp, temp, year, month, threeYear, index) {
-      const localTime = timestamp ? new Date(timestamp).toLocaleString('en-US', { timeZone: 'America/Denver', hour: 'numeric', minute: '2-digit', month: 'short', day: 'numeric' }) : 'N/A';
-      const flowDisplay = flow !== 'N/A' ? parseFloat(flow).toLocaleString() : 'N/A';
-
+    function renderTile(name, maxYear, minYear, maxMonth, minMonth, max3, min3, index) {
       const tile = document.createElement('div');
       tile.className = 'tile';
-      tile.style.setProperty('--order', index);
       tile.innerHTML = `
         <h2>${name}</h2>
-        <div class="metric highlight-flow">${flowDisplay} CFS</div>
-        <div class="metric"><strong>Temp:</strong> ${temp ?? 'N/A'} °F</div>
-        <div class="metric"><strong>Updated:</strong> ${localTime}</div>
-        <hr>
         <div class="metric-group">
-          <div class="metric min"><strong>Min (Last Year):</strong> ${year.min} CFS</div>
-          <div class="metric max"><strong>Max (Last Year):</strong> ${year.max} CFS</div>
+          <div class="metric min"><strong>Min (Last Year):</strong> ${minYear} CFS</div>
+          <div class="metric max"><strong>Max (Last Year):</strong> ${maxYear} CFS</div>
         </div>
         <div class="metric-group">
-          <div class="metric min"><strong>Min (Last Yr Mo):</strong> ${month.min} CFS</div>
-          <div class="metric max"><strong>Max (Last Yr Mo):</strong> ${month.max} CFS</div>
+          <div class="metric min"><strong>Min (Last Yr Mo):</strong> ${minMonth} CFS</div>
+          <div class="metric max"><strong>Max (Last Yr Mo):</strong> ${maxMonth} CFS</div>
         </div>
         <div class="metric-group">
-          <div class="metric min"><strong>Min (3 Years):</strong> ${threeYear.min} CFS</div>
-          <div class="metric max"><strong>Max (3 Years):</strong> ${threeYear.max} CFS</div>
+          <div class="metric min"><strong>Min (3 Years):</strong> ${min3} CFS</div>
+          <div class="metric max"><strong>Max (3 Years):</strong> ${max3} CFS</div>
         </div>
       `;
       dashboard.appendChild(tile);
     }
 
     sites.forEach((site, index) => fetchSiteData(site, index));
-    setInterval(() => {
-      dashboard.innerHTML = '';
-      sites.forEach((site, index) => fetchSiteData(site, index));
-    }, 3600000);
   </script>
 </body>
 </html>
