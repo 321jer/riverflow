@@ -83,78 +83,67 @@
       const now = new Date();
       const today = now.toISOString().split('T')[0];
       const oneYearAgo = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate()).toISOString().split('T')[0];
-      const fiveYearsAgo = new Date(now.getFullYear() - 5, now.getMonth(), now.getDate()).toISOString().split('T')[0];
+      const threeYearsAgo = new Date(now.getFullYear() - 3, now.getMonth(), now.getDate()).toISOString().split('T')[0];
       const thisMonthLastYearStart = new Date(now.getFullYear() - 1, now.getMonth(), 1).toISOString().split('T')[0];
       const thisMonthLastYearEnd = new Date(now.getFullYear() - 1, now.getMonth() + 1, 0).toISOString().split('T')[0];
 
-      const ivURL = `https://waterservices.usgs.gov/nwis/iv/?format=json&sites=${site.id}&parameterCd=00060,00010&siteStatus=all`;
-      const dailyMeanURL = (start, end) =>
-        `https://nwis.waterservices.usgs.gov/nwis/dv/?format=json&sites=${site.id}&startDT=${start}&endDT=${end}&parameterCd=00060,00010&statCd=00003`;
-      const dailyMaxURL = (start, end) =>
-        `https://nwis.waterservices.usgs.gov/nwis/dv/?format=json&sites=${site.id}&startDT=${start}&endDT=${end}&parameterCd=00060&statCd=00001`;
+      const baseURL = `https://waterservices.usgs.gov/nwis/iv/?format=json&sites=${site.id}&parameterCd=00060,00010&siteStatus=all`;
+      const dailyURL = (start, end) => `https://nwis.waterservices.usgs.gov/nwis/dv/?format=json&sites=${site.id}&startDT=${start}&endDT=${end}&parameterCd=00060,00010&statCd=00003`;
 
       try {
-        const [currentRes, meanYearRes, meanMonthRes, meanFiveRes, maxYearRes, maxMonthRes, maxFiveRes] = await Promise.all([
-          fetch(ivURL),
-          fetch(dailyMeanURL(oneYearAgo, today)),
-          fetch(dailyMeanURL(thisMonthLastYearStart, thisMonthLastYearEnd)),
-          fetch(dailyMeanURL(fiveYearsAgo, today)),
-          fetch(dailyMaxURL(oneYearAgo, today)),
-          fetch(dailyMaxURL(thisMonthLastYearStart, thisMonthLastYearEnd)),
-          fetch(dailyMaxURL(fiveYearsAgo, today))
+        const [currentRes, yearRes, monthRes, threeYearRes] = await Promise.all([
+          fetch(baseURL),
+          fetch(dailyURL(oneYearAgo, today)),
+          fetch(dailyURL(thisMonthLastYearStart, thisMonthLastYearEnd)),
+          fetch(dailyURL(threeYearsAgo, today)) // Change from five years to three years
         ]);
 
         const currentData = await currentRes.json();
-        const yearMeanJson = await meanYearRes.json();
-        const monthMeanJson = await meanMonthRes.json();
-        const fiveMeanJson = await meanFiveRes.json();
-        const yearMaxJson = await maxYearRes.json();
-        const monthMaxJson = await maxMonthRes.json();
-        const fiveMaxJson = await maxFiveRes.json();
+        const yearJson = await yearRes.json();
+        const monthJson = await monthRes.json();
+        const threeYearJson = await threeYearRes.json();
 
-        console.log("Current Data:", currentData);
-        console.log("Year Mean Data:", yearMeanJson);
-        console.log("Month Mean Data:", monthMeanJson);
-        console.log("Five Year Mean Data:", fiveMeanJson);
-        console.log("Year Max Data:", yearMaxJson);
-        console.log("Month Max Data:", monthMaxJson);
-        console.log("Five Year Max Data:", fiveMaxJson);
+        const extractValue = (res, code) => res.value.timeSeries.find(s => s.variable.variableCode[0].value === code)?.values[0]?.value.map(v => parseFloat(v.value)).filter(v => !isNaN(v)) || [];
+        const extractDate = (res) => res.value.timeSeries[0]?.values[0]?.value[0]?.dateTime || '';
 
         const flow = currentData.value.timeSeries.find(s => s.variable.variableCode[0].value === '00060')?.values[0]?.value[0]?.value || 'N/A';
         const tempC = currentData.value.timeSeries.find(s => s.variable.variableCode[0].value === '00010')?.values[0]?.value[0]?.value || null;
         const tempF = tempC ? (parseFloat(tempC) * 9/5 + 32).toFixed(1) : 'N/A';
-        const timestamp = currentData.value.timeSeries[0]?.values[0]?.value[0]?.dateTime || 'N/A';
+        const timestamp = extractDate(currentData);
 
-        const yearData = yearMeanJson.value?.timeSeries[0]?.values[0]?.value.map(v => parseFloat(v.value)) || [];
-        const monthData = monthMeanJson.value?.timeSeries[0]?.values[0]?.value.map(v => parseFloat(v.value)) || [];
-        const fiveData = fiveMeanJson.value?.timeSeries[0]?.values[0]?.value.map(v => parseFloat(v.value)) || [];
+        const yearData = extractValue(yearJson, '00060');
+        const monthData = extractValue(monthJson, '00060');
+        const threeYearData = extractValue(threeYearJson, '00060'); // Three-year data
 
-        const yearTemps = yearMeanJson.value?.timeSeries[0]?.values[0]?.value.map(v => parseFloat(v.value)) || [];
+        const yearTemps = extractValue(yearJson, '00010');
         const tempMinYear = yearTemps.length ? (Math.min(...yearTemps) * 9/5 + 32).toFixed(1) : null;
         const tempMaxYear = yearTemps.length ? (Math.max(...yearTemps) * 9/5 + 32).toFixed(1) : null;
 
-        const yearMaxes = yearMaxJson.value?.timeSeries[0]?.values[0]?.value.map(v => parseFloat(v.value)) || [];
-        const monthMaxes = monthMaxJson.value?.timeSeries[0]?.values[0]?.value.map(v => parseFloat(v.value)) || [];
-        const fiveMaxes = fiveMaxJson.value?.timeSeries[0]?.values[0]?.value.map(v => parseFloat(v.value)) || [];
+        const percentile = (arr, p) => {
+          if (!arr || !arr.length) return 'N/A';
+          const sorted = [...arr].sort((a, b) => a - b);
+          const idx = Math.floor(p * sorted.length);
+          return Math.round(sorted[idx]).toLocaleString();
+        };
 
         const getMax = (arr) => (arr && arr.length ? Math.round(Math.max(...arr)).toLocaleString() : 'N/A');
 
-        const minYear = yearData.length ? Math.round(Math.min(...yearData)).toLocaleString() : 'N/A';
-        const minMonth = monthData.length ? Math.round(Math.min(...monthData)).toLocaleString() : 'N/A';
-        const min5 = fiveData.length ? Math.round(Math.min(...fiveData)).toLocaleString() : 'N/A';
+        const minYear = percentile(yearData, 0.1);
+        const minMonth = percentile(monthData, 0.1);
+        const min3 = percentile(threeYearData, 0.1);  // Min flow in the past 3 years
 
-        const maxYear = getMax(yearMaxes);
-        const maxMonth = getMax(monthMaxes);
-        const max5 = getMax(fiveMaxes);
+        const maxYear = getMax(yearData);
+        const maxMonth = getMax(monthData);
+        const max3 = threeYearData.length ? Math.max(...threeYearData) : 'N/A';  // Max flow in the past 3 years
 
-        renderTile(site.name, flow, timestamp, tempF, tempMinYear, tempMaxYear, maxYear, minYear, maxMonth, minMonth, max5, min5, index);
+        renderTile(site.name, flow, timestamp, tempF, tempMinYear, tempMaxYear, maxYear, minYear, maxMonth, minMonth, max3, min3, index);
       } catch (e) {
         console.error("Error fetching data for", site.name, e);
         renderTile(site.name, 'N/A', '', 'N/A', null, null, 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', index);
       }
     }
 
-    function renderTile(name, flow, timestamp, temp, tempMinYear, tempMaxYear, maxYear, minYear, maxMonth, minMonth, max5, min5, index) {
+    function renderTile(name, flow, timestamp, temp, tempMinYear, tempMaxYear, maxYear, minYear, maxMonth, minMonth, max3, min3, index) {
       const localTime = timestamp ? new Date(timestamp).toLocaleString('en-US', { timeZone: 'America/Denver', hour: 'numeric', minute: '2-digit', month: 'short', day: 'numeric' }) : 'N/A';
       const flowDisplay = flow !== 'N/A' ? parseFloat(flow).toLocaleString() : 'N/A';
 
@@ -178,8 +167,8 @@
           <div class="metric max"><strong>Max (Last Yr Mo):</strong> ${maxMonth} CFS</div>
         </div>
         <div class="metric-group">
-          <div class="metric min"><strong>Min (5 Years):</strong> ${min5} CFS</div>
-          <div class="metric max"><strong>Max (5 Years):</strong> ${max5} CFS</div>
+          <div class="metric min"><strong>Min (3 Years):</strong> ${min3} CFS</div>
+          <div class="metric max"><strong>Max (3 Years):</strong> ${max3} CFS</div>
         </div>
       `;
       dashboard.appendChild(tile);
