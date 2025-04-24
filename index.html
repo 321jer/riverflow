@@ -93,12 +93,12 @@
         tile.id = `tile-${site.id}`;
         tile.innerHTML = `
           <h2>${site.name}</h2>
-          <div class="metric highlight-flow">Loading...</div>
+          <div class="metric highlight-flow">Loading current data...</div>
           <div class="metric"><strong>Temp:</strong> Loading...</div>
           <div class="metric"><strong>Updated:</strong> Loading...</div>
           <hr>
           <div class="metric-group">
-            <div class="metric min"><strong>Min (Last Year):</strong> Loading...</div>
+            <div class="metric min"><strong>Min (Last Year):</strong> Loading historical data...</div>
             <div class="metric max"><strong>Max (Last Year):</strong> Loading...</div>
           </div>
           <div class="metric-group">
@@ -119,65 +119,109 @@
 
     async function fetchSiteData(site) {
       try {
-        // Current data
-        const currentUrl = `https://waterservices.usgs.gov/nwis/iv/?format=json&sites=${site.id}&parameterCd=00060,00010&siteStatus=all`;
-        const currentResponse = await fetch(currentUrl);
-        const currentData = await currentResponse.json();
+        // First fetch current data
+        await fetchCurrentData(site);
         
-        // Process current data
-        const flowSeries = currentData.value.timeSeries.find(s => 
+        // Then fetch historical data
+        await fetchHistoricalData(site);
+      } catch (error) {
+        console.error(`Error fetching data for ${site.name}:`, error);
+        updateTile(site, {
+          error: true
+        });
+      }
+    }
+
+    async function fetchCurrentData(site) {
+      try {
+        const url = `https://waterservices.usgs.gov/nwis/iv/?format=json&sites=${site.id}&parameterCd=00060,00010&siteStatus=all`;
+        const response = await fetch(url);
+        
+        if (!response.ok) throw new Error("Network response was not ok");
+        
+        const data = await response.json();
+        
+        if (!data.value?.timeSeries) {
+          throw new Error("Invalid data format received");
+        }
+        
+        const flowSeries = data.value.timeSeries.find(s => 
           s.variable.variableCode[0].value === '00060');
-        const tempSeries = currentData.value.timeSeries.find(s => 
+        const tempSeries = data.value.timeSeries.find(s => 
           s.variable.variableCode[0].value === '00010');
         
         let flowValue = flowSeries?.values[0]?.value[0]?.value;
-        if (flowValue && parseFloat(flowValue) < 0) flowValue = null;
+        // Fix for error values
+        if (flowValue && (parseFloat(flowValue) < 0 || flowValue === '-999999')) {
+          flowValue = null;
+        }
         
         const tempValue = tempSeries?.values[0]?.value[0]?.value || null;
         const timestamp = flowSeries?.values[0]?.value[0]?.dateTime || '';
         
-        // Historical data - using peak streamflow service
-        const now = new Date();
-        const currentYear = now.getFullYear();
-        const currentMonth = now.getMonth();
-        
-        // Last year's data
-        const lastYearUrl = `https://waterdata.usgs.gov/nwis/peak?site_no=${site.id}&range_selection=year_range&format=rdb&begin_date=${currentYear-1}-01-01&end_date=${currentYear-1}-12-31`;
-        const lastYearResponse = await fetch(lastYearUrl);
-        const lastYearText = await lastYearResponse.text();
-        const lastYearData = parsePeakData(lastYearText);
-        
-        // Same month last year
-        const lastYearMonthUrl = `https://waterservices.usgs.gov/nwis/dv/?format=json&sites=${site.id}&startDT=${currentYear-1}-${currentMonth+1}-01&endDT=${currentYear-1}-${currentMonth+1}-31&parameterCd=00060&statCd=00001,00002`;
-        const lastYearMonthResponse = await fetch(lastYearMonthUrl);
-        const lastYearMonthData = await lastYearMonthResponse.json();
-        const lastYearMonthStats = extractStats(lastYearMonthData);
-        
-        // 5-year data (using annual peaks)
-        const fiveYearUrl = `https://waterdata.usgs.gov/nwis/peak?site_no=${site.id}&range_selection=year_range&format=rdb&begin_date=${currentYear-5}-01-01&end_date=${currentYear-1}-12-31`;
-        const fiveYearResponse = await fetch(fiveYearUrl);
-        const fiveYearText = await fiveYearResponse.text();
-        const fiveYearData = parsePeakData(fiveYearText);
-        
-        // Update the tile
         updateTile(site, {
           flow: flowValue !== null ? parseFloat(flowValue).toLocaleString() : 'N/A',
           temp: tempValue !== null ? (parseFloat(tempValue) * 9/5 + 32).toFixed(1) : 'N/A',
-          timestamp: timestamp,
-          lastYear: lastYearData,
-          lastYearMonth: lastYearMonthStats,
-          fiveYear: fiveYearData
+          timestamp: timestamp
         });
-        
       } catch (error) {
-        console.error(`Error fetching data for ${site.name}:`, error);
+        console.error(`Error fetching current data for ${site.name}:`, error);
         updateTile(site, {
           flow: 'N/A',
           temp: 'N/A',
           timestamp: 'Data unavailable',
-          error: true
+          currentError: true
         });
       }
+    }
+
+    async function fetchHistoricalData(site) {
+      try {
+        const now = new Date();
+        const currentYear = now.getFullYear();
+        const currentMonth = now.getMonth() + 1; // Months are 1-12
+        
+        // Get last year's data
+        const lastYearUrl = `https://waterservices.usgs.gov/nwis/dv/?format=json&sites=${site.id}&startDT=${currentYear-1}-01-01&endDT=${currentYear-1}-12-31&parameterCd=00060&statCd=00001,00002`;
+        const lastYearResponse = await fetch(lastYearUrl);
+        const lastYearData = await lastYearResponse.json();
+        const lastYearStats = extractMinMax(lastYearData);
+        
+        // Get same month last year
+        const lastYearMonthUrl = `https://waterservices.usgs.gov/nwis/dv/?format=json&sites=${site.id}&startDT=${currentYear-1}-${currentMonth}-01&endDT=${currentYear-1}-${currentMonth}-31&parameterCd=00060&statCd=00001,00002`;
+        const lastYearMonthResponse = await fetch(lastYearMonthUrl);
+        const lastYearMonthData = await lastYearMonthResponse.json();
+        const lastYearMonthStats = extractMinMax(lastYearMonthData);
+        
+        // Get 5-year data (using annual peaks)
+        const fiveYearUrl = `https://waterdata.usgs.gov/nwis/peak?site_no=${site.id}&range_selection=year_range&format=rdb&begin_date=${currentYear-5}-01-01&end_date=${currentYear-1}-12-31`;
+        const fiveYearResponse = await fetch(fiveYearUrl);
+        const fiveYearText = await fiveYearResponse.text();
+        const fiveYearStats = parsePeakData(fiveYearText);
+        
+        updateTile(site, {
+          lastYear: lastYearStats,
+          lastYearMonth: lastYearMonthStats,
+          fiveYear: fiveYearStats
+        });
+      } catch (error) {
+        console.error(`Error fetching historical data for ${site.name}:`, error);
+        updateTile(site, {
+          historicalError: true
+        });
+      }
+    }
+
+    function extractMinMax(data) {
+      if (!data.value?.timeSeries?.[0]?.values) return { min: 'N/A', max: 'N/A' };
+      
+      const minValues = data.value.timeSeries[0].values.find(v => v.method.methodID === '00001');
+      const maxValues = data.value.timeSeries[0].values.find(v => v.method.methodID === '00002');
+      
+      return {
+        min: minValues?.value?.[0]?.value ? Math.round(parseFloat(minValues.value[0].value)).toLocaleString() : 'N/A',
+        max: maxValues?.value?.[0]?.value ? Math.round(parseFloat(maxValues.value[0].value)).toLocaleString() : 'N/A'
+      };
     }
 
     function parsePeakData(text) {
@@ -196,19 +240,7 @@
       };
     }
 
-    function extractStats(data) {
-      if (!data.value?.timeSeries?.[0]?.values) return { min: 'N/A', max: 'N/A' };
-      
-      const minValues = data.value.timeSeries[0].values.find(v => v.method.methodID === '00001');
-      const maxValues = data.value.timeSeries[0].values.find(v => v.method.methodID === '00002');
-      
-      return {
-        min: minValues?.value?.[0]?.value ? Math.round(parseFloat(minValues.value[0].value)).toLocaleString() : 'N/A',
-        max: maxValues?.value?.[0]?.value ? Math.round(parseFloat(maxValues.value[0].value)).toLocaleString() : 'N/A'
-      };
-    }
-
-    function updateTile(site, { flow, temp, timestamp, lastYear, lastYearMonth, fiveYear, error }) {
+    function updateTile(site, { flow, temp, timestamp, lastYear, lastYearMonth, fiveYear, error, currentError, historicalError }) {
       const tile = document.getElementById(`tile-${site.id}`);
       if (!tile) return;
       
@@ -220,22 +252,26 @@
         if (el) el.textContent = text;
       };
       
-      updateElement('.highlight-flow', `${flow} CFS`);
-      updateElement('.metric:nth-child(3)', `Temp: ${temp} °F`);
+      if (flow !== undefined) updateElement('.highlight-flow', `${flow} CFS`);
+      if (temp !== undefined) updateElement('.metric:nth-child(3)', `Temp: ${temp} °F`);
       
       if (timestamp) {
-        const localTime = new Date(timestamp).toLocaleString('en-US', { 
-          timeZone: 'America/Denver',
-          hour: 'numeric',
-          minute: '2-digit',
-          month: 'short',
-          day: 'numeric'
-        });
-        updateElement('.metric:nth-child(4)', `Updated: ${localTime}`);
+        try {
+          const localTime = new Date(timestamp).toLocaleString('en-US', { 
+            timeZone: 'America/Denver',
+            hour: 'numeric',
+            minute: '2-digit',
+            month: 'short',
+            day: 'numeric'
+          });
+          updateElement('.metric:nth-child(4)', `Updated: ${localTime}`);
+        } catch (e) {
+          updateElement('.metric:nth-child(4)', `Updated: N/A`);
+        }
       }
       
       // Update historical data or show errors
-      if (error) {
+      if (historicalError) {
         updateElement('.metric-group:nth-child(5) .min', 'Min (Last Year): Data unavailable');
         updateElement('.metric-group:nth-child(5) .max', 'Max (Last Year): Data unavailable');
         updateElement('.metric-group:nth-child(6) .min', 'Min (Last Yr Mo): Data unavailable');
@@ -261,9 +297,6 @@
     // Initialize
     fetchData();
     setInterval(fetchData, 3600000); // Refresh every hour
-  </script>
-</body>
-</html>
   </script>
 </body>
 </html>
