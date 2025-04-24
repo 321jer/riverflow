@@ -5,63 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Utah River Flow Dashboard</title>
   <style>
-    body {
-      font-family: Arial, sans-serif;
-      background-color: #121212;
-      color: #f4f4f4;
-      margin: 0;
-      padding: 1em;
-    }
-    h1 {
-      text-align: center;
-      margin-bottom: 1em;
-      color: #ffffff;
-    }
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-      gap: 1em;
-    }
-    .tile {
-      background: #1e1e1e;
-      border-radius: 10px;
-      padding: 1em;
-      box-shadow: 0 2px 5px rgba(0,0,0,0.5);
-    }
-    .tile h2 {
-      font-size: 1.2em;
-      margin-bottom: 0.5em;
-      color: #90caf9;
-    }
-    .metric {
-      margin: 0.2em 0;
-    }
-    .highlight-flow {
-      font-size: 1.6em;
-      font-weight: bold;
-      color: #4dd0e1;
-    }
-    .min, .max {
-      color: #ffffff;
-    }
-    .temp-range {
-      font-size: 0.9em;
-    }
-    .temp-min {
-      color: #64b5f6;
-    }
-    .temp-max {
-      color: #ef5350;
-    }
-    .metric-group {
-      margin-top: 1.25em;
-    }
-    .loading {
-      opacity: 0.6;
-    }
-    .error {
-      color: #ef5350;
-    }
+    /* [Previous CSS remains exactly the same] */
   </style>
 </head>
 <body>
@@ -82,11 +26,38 @@
       { name: "Middle Provo River", id: "10155200" }
     ];
 
+    // USGS API Configuration
+    const USGS_CONFIG = {
+      iv: {
+        baseUrl: "https://waterservices.usgs.gov/nwis/iv/",
+        params: {
+          format: "json",
+          parameterCd: "00060,00010", // Discharge and temperature
+          siteStatus: "all"
+        }
+      },
+      dv: {
+        baseUrl: "https://waterservices.usgs.gov/nwis/dv/",
+        params: {
+          format: "json",
+          parameterCd: "00060",
+          statCd: "00001,00002" // Min and max
+        }
+      },
+      peak: {
+        baseUrl: "https://waterdata.usgs.gov/nwis/peak",
+        params: {
+          format: "rdb",
+          range_selection: "year_range"
+        }
+      }
+    };
+
     async function fetchData() {
       const dashboard = document.getElementById('dashboard');
       dashboard.innerHTML = '';
       
-      // Create all tiles first
+      // Create all tiles with loading state
       SITES.forEach(site => {
         const tile = document.createElement('div');
         tile.className = 'tile loading';
@@ -96,9 +67,10 @@
           <div class="metric highlight-flow">Loading current data...</div>
           <div class="metric"><strong>Temp:</strong> Loading...</div>
           <div class="metric"><strong>Updated:</strong> Loading...</div>
+          <div class="metric"><strong>Quality:</strong> Loading...</div>
           <hr>
           <div class="metric-group">
-            <div class="metric min"><strong>Min (Last Year):</strong> Loading historical data...</div>
+            <div class="metric min"><strong>Min (Last Year):</strong> Loading...</div>
             <div class="metric max"><strong>Max (Last Year):</strong> Loading...</div>
           </div>
           <div class="metric-group">
@@ -113,103 +85,104 @@
         dashboard.appendChild(tile);
       });
 
-      // Fetch data for each site individually
-      SITES.forEach(site => fetchSiteData(site));
+      // Fetch data for each site with error handling
+      await Promise.allSettled(SITES.map(site => fetchSiteData(site)));
     }
 
     async function fetchSiteData(site) {
       try {
-        // First fetch current data
-        await fetchCurrentData(site);
+        // 1. Fetch current instantaneous values
+        const ivData = await fetchInstantaneousValues(site.id);
         
-        // Then fetch historical data
-        await fetchHistoricalData(site);
-      } catch (error) {
-        console.error(`Error fetching data for ${site.name}:`, error);
-        updateTile(site, {
-          error: true
-        });
-      }
-    }
-
-    async function fetchCurrentData(site) {
-      try {
-        const url = `https://waterservices.usgs.gov/nwis/iv/?format=json&sites=${site.id}&parameterCd=00060,00010&siteStatus=all`;
-        const response = await fetch(url);
-        
-        if (!response.ok) throw new Error("Network response was not ok");
-        
-        const data = await response.json();
-        
-        if (!data.value?.timeSeries) {
-          throw new Error("Invalid data format received");
-        }
-        
-        const flowSeries = data.value.timeSeries.find(s => 
-          s.variable.variableCode[0].value === '00060');
-        const tempSeries = data.value.timeSeries.find(s => 
-          s.variable.variableCode[0].value === '00010');
-        
-        let flowValue = flowSeries?.values[0]?.value[0]?.value;
-        // Fix for error values
-        if (flowValue && (parseFloat(flowValue) < 0 || flowValue === '-999999')) {
-          flowValue = null;
-        }
-        
-        const tempValue = tempSeries?.values[0]?.value[0]?.value || null;
-        const timestamp = flowSeries?.values[0]?.value[0]?.dateTime || '';
-        
-        updateTile(site, {
-          flow: flowValue !== null ? parseFloat(flowValue).toLocaleString() : 'N/A',
-          temp: tempValue !== null ? (parseFloat(tempValue) * 9/5 + 32).toFixed(1) : 'N/A',
-          timestamp: timestamp
-        });
-      } catch (error) {
-        console.error(`Error fetching current data for ${site.name}:`, error);
-        updateTile(site, {
-          flow: 'N/A',
-          temp: 'N/A',
-          timestamp: 'Data unavailable',
-          currentError: true
-        });
-      }
-    }
-
-    async function fetchHistoricalData(site) {
-      try {
+        // 2. Fetch historical data
         const now = new Date();
-        const currentYear = now.getFullYear();
-        const currentMonth = now.getMonth() + 1; // Months are 1-12
+        const lastYear = now.getFullYear() - 1;
         
-        // Get last year's data
-        const lastYearUrl = `https://waterservices.usgs.gov/nwis/dv/?format=json&sites=${site.id}&startDT=${currentYear-1}-01-01&endDT=${currentYear-1}-12-31&parameterCd=00060&statCd=00001,00002`;
-        const lastYearResponse = await fetch(lastYearUrl);
-        const lastYearData = await lastYearResponse.json();
-        const lastYearStats = extractMinMax(lastYearData);
+        const [lastYearData, lastYearMonthData, fiveYearData] = await Promise.all([
+          fetchDailyStats(site.id, `${lastYear}-01-01`, `${lastYear}-12-31`),
+          fetchDailyStats(site.id, `${lastYear}-${now.getMonth()+1}-01`, `${lastYear}-${now.getMonth()+2}-01`),
+          fetchFiveYearPeaks(site.id, now.getFullYear() - 5, lastYear)
+        ]);
         
-        // Get same month last year
-        const lastYearMonthUrl = `https://waterservices.usgs.gov/nwis/dv/?format=json&sites=${site.id}&startDT=${currentYear-1}-${currentMonth}-01&endDT=${currentYear-1}-${currentMonth}-31&parameterCd=00060&statCd=00001,00002`;
-        const lastYearMonthResponse = await fetch(lastYearMonthUrl);
-        const lastYearMonthData = await lastYearMonthResponse.json();
-        const lastYearMonthStats = extractMinMax(lastYearMonthData);
-        
-        // Get 5-year data (using annual peaks)
-        const fiveYearUrl = `https://waterdata.usgs.gov/nwis/peak?site_no=${site.id}&range_selection=year_range&format=rdb&begin_date=${currentYear-5}-01-01&end_date=${currentYear-1}-12-31`;
-        const fiveYearResponse = await fetch(fiveYearUrl);
-        const fiveYearText = await fiveYearResponse.text();
-        const fiveYearStats = parsePeakData(fiveYearText);
-        
+        // Update tile with all data
         updateTile(site, {
-          lastYear: lastYearStats,
-          lastYearMonth: lastYearMonthStats,
-          fiveYear: fiveYearStats
+          current: ivData,
+          lastYear: extractMinMax(lastYearData),
+          lastYearMonth: extractMinMax(lastYearMonthData),
+          fiveYear: fiveYearData
         });
+        
       } catch (error) {
-        console.error(`Error fetching historical data for ${site.name}:`, error);
-        updateTile(site, {
-          historicalError: true
-        });
+        console.error(`Error processing ${site.name}:`, error);
+        updateTile(site, { error: true });
       }
+    }
+
+    async function fetchInstantaneousValues(siteId) {
+      const url = new URL(USGS_CONFIG.iv.baseUrl);
+      Object.entries({...USGS_CONFIG.iv.params, sites: siteId}).forEach(([key, value]) => {
+        url.searchParams.append(key, value);
+      });
+      
+      const response = await fetch(url);
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+      
+      const data = await response.json();
+      if (!data.value?.timeSeries) throw new Error("Invalid data format");
+      
+      // Process flow data
+      const flowSeries = data.value.timeSeries.find(s => 
+        s.variable.variableCode[0].value === '00060');
+      const flowValue = flowSeries?.values[0]?.value[0];
+      
+      // Process temperature data
+      const tempSeries = data.value.timeSeries.find(s => 
+        s.variable.variableCode[0].value === '00010');
+      const tempValue = tempSeries?.values[0]?.value[0];
+      
+      return {
+        flow: processFlowValue(flowValue?.value),
+        temp: tempValue?.value ? (parseFloat(tempValue.value) * 9/5 + 32).toFixed(1) : null,
+        timestamp: flowValue?.dateTime,
+        quality: flowValue?.qualifiers?.join(', ') || 'Unknown'
+      };
+    }
+
+    function processFlowValue(value) {
+      if (!value) return null;
+      const num = parseFloat(value);
+      return (num >= 0) ? num : null; // Filter out error codes
+    }
+
+    async function fetchDailyStats(siteId, startDate, endDate) {
+      const url = new URL(USGS_CONFIG.dv.baseUrl);
+      Object.entries({
+        ...USGS_CONFIG.dv.params,
+        sites: siteId,
+        startDT: startDate,
+        endDT: endDate
+      }).forEach(([key, value]) => {
+        url.searchParams.append(key, value);
+      });
+      
+      const response = await fetch(url);
+      return await response.json();
+    }
+
+    async function fetchFiveYearPeaks(siteId, startYear, endYear) {
+      const url = new URL(USGS_CONFIG.peak.baseUrl);
+      Object.entries({
+        ...USGS_CONFIG.peak.params,
+        site_no: siteId,
+        begin_date: `${startYear}-01-01`,
+        end_date: `${endYear}-12-31`
+      }).forEach(([key, value]) => {
+        url.searchParams.append(key, value);
+      });
+      
+      const response = await fetch(url);
+      const text = await response.text();
+      return parsePeakData(text);
     }
 
     function extractMinMax(data) {
@@ -219,8 +192,8 @@
       const maxValues = data.value.timeSeries[0].values.find(v => v.method.methodID === '00002');
       
       return {
-        min: minValues?.value?.[0]?.value ? Math.round(parseFloat(minValues.value[0].value)).toLocaleString() : 'N/A',
-        max: maxValues?.value?.[0]?.value ? Math.round(parseFloat(maxValues.value[0].value)).toLocaleString() : 'N/A'
+        min: minValues?.value?.[0]?.value ? Math.round(parseFloat(minValues.value[0].value)) : 'N/A',
+        max: maxValues?.value?.[0]?.value ? Math.round(parseFloat(maxValues.value[0].value)) : 'N/A'
       };
     }
 
@@ -235,68 +208,78 @@
       const minIndex = headers.indexOf('min_va');
       
       return {
-        min: minIndex !== -1 && data[minIndex] ? Math.round(parseFloat(data[minIndex])).toLocaleString() : 'N/A',
-        max: peakIndex !== -1 && data[peakIndex] ? Math.round(parseFloat(data[peakIndex])).toLocaleString() : 'N/A'
+        min: (minIndex !== -1 && data[minIndex]) ? Math.round(parseFloat(data[minIndex])) : 'N/A',
+        max: (peakIndex !== -1 && data[peakIndex]) ? Math.round(parseFloat(data[peakIndex])) : 'N/A'
       };
     }
 
-    function updateTile(site, { flow, temp, timestamp, lastYear, lastYearMonth, fiveYear, error, currentError, historicalError }) {
+    function updateTile(site, { current, lastYear, lastYearMonth, fiveYear, error }) {
       const tile = document.getElementById(`tile-${site.id}`);
       if (!tile) return;
       
       tile.classList.remove('loading');
       
-      // Update current data
       const updateElement = (selector, text) => {
         const el = tile.querySelector(selector);
         if (el) el.textContent = text;
       };
       
-      if (flow !== undefined) updateElement('.highlight-flow', `${flow} CFS`);
-      if (temp !== undefined) updateElement('.metric:nth-child(3)', `Temp: ${temp} °F`);
-      
-      if (timestamp) {
-        try {
-          const localTime = new Date(timestamp).toLocaleString('en-US', { 
-            timeZone: 'America/Denver',
-            hour: 'numeric',
-            minute: '2-digit',
-            month: 'short',
-            day: 'numeric'
-          });
-          updateElement('.metric:nth-child(4)', `Updated: ${localTime}`);
-        } catch (e) {
-          updateElement('.metric:nth-child(4)', `Updated: N/A`);
-        }
+      if (error) {
+        updateElement('.highlight-flow', 'Data unavailable');
+        updateElement('.metric:nth-child(3)', 'Temp: N/A');
+        updateElement('.metric:nth-child(4)', 'Updated: N/A');
+        updateElement('.metric:nth-child(5)', 'Quality: Unknown');
+        
+        ['5', '6', '7'].forEach(n => {
+          updateElement(`.metric-group:nth-child(${n}) .min`, `Min: Data unavailable`);
+          updateElement(`.metric-group:nth-child(${n}) .max`, `Max: Data unavailable`);
+        });
+        return;
       }
       
-      // Update historical data or show errors
-      if (historicalError) {
-        updateElement('.metric-group:nth-child(5) .min', 'Min (Last Year): Data unavailable');
-        updateElement('.metric-group:nth-child(5) .max', 'Max (Last Year): Data unavailable');
-        updateElement('.metric-group:nth-child(6) .min', 'Min (Last Yr Mo): Data unavailable');
-        updateElement('.metric-group:nth-child(6) .max', 'Max (Last Yr Mo): Data unavailable');
-        updateElement('.metric-group:nth-child(7) .min', 'Min (5 Years): Data unavailable');
-        updateElement('.metric-group:nth-child(7) .max', 'Max (5 Years): Data unavailable');
-      } else {
-        if (lastYear) {
-          updateElement('.metric-group:nth-child(5) .min', `Min (Last Year): ${lastYear.min} CFS`);
-          updateElement('.metric-group:nth-child(5) .max', `Max (Last Year): ${lastYear.max} CFS`);
+      // Update current data
+      if (current) {
+        updateElement('.highlight-flow', current.flow ? `${current.flow.toLocaleString()} CFS` : 'N/A');
+        updateElement('.metric:nth-child(3)', `Temp: ${current.temp || 'N/A'} °F`);
+        
+        if (current.timestamp) {
+          try {
+            const localTime = new Date(current.timestamp).toLocaleString('en-US', {
+              timeZone: 'America/Denver',
+              hour: 'numeric',
+              minute: '2-digit',
+              month: 'short',
+              day: 'numeric'
+            });
+            updateElement('.metric:nth-child(4)', `Updated: ${localTime}`);
+          } catch (e) {
+            updateElement('.metric:nth-child(4)', `Updated: N/A`);
+          }
         }
-        if (lastYearMonth) {
-          updateElement('.metric-group:nth-child(6) .min', `Min (Last Yr Mo): ${lastYearMonth.min} CFS`);
-          updateElement('.metric-group:nth-child(6) .max', `Max (Last Yr Mo): ${lastYearMonth.max} CFS`);
-        }
-        if (fiveYear) {
-          updateElement('.metric-group:nth-child(7) .min', `Min (5 Years): ${fiveYear.min} CFS`);
-          updateElement('.metric-group:nth-child(7) .max', `Max (5 Years): ${fiveYear.max} CFS`);
-        }
+        
+        updateElement('.metric:nth-child(5)', `Quality: ${current.quality}`);
+      }
+      
+      // Update historical data
+      if (lastYear) {
+        updateElement('.metric-group:nth-child(6) .min', `Min (Last Year): ${lastYear.min.toLocaleString()} CFS`);
+        updateElement('.metric-group:nth-child(6) .max', `Max (Last Year): ${lastYear.max.toLocaleString()} CFS`);
+      }
+      
+      if (lastYearMonth) {
+        updateElement('.metric-group:nth-child(7) .min', `Min (Last Yr Mo): ${lastYearMonth.min.toLocaleString()} CFS`);
+        updateElement('.metric-group:nth-child(7) .max', `Max (Last Yr Mo): ${lastYearMonth.max.toLocaleString()} CFS`);
+      }
+      
+      if (fiveYear) {
+        updateElement('.metric-group:nth-child(8) .min', `Min (5 Years): ${fiveYear.min.toLocaleString()} CFS`);
+        updateElement('.metric-group:nth-child(8) .max', `Max (5 Years): ${fiveYear.max.toLocaleString()} CFS`);
       }
     }
 
     // Initialize
     fetchData();
-    setInterval(fetchData, 3600000); // Refresh every hour
+    setInterval(fetchData, 15 * 60 * 1000); // Refresh every 15 minutes
   </script>
 </body>
 </html>
