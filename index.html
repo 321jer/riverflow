@@ -87,22 +87,33 @@
       const thisMonthLastYearStart = new Date(now.getFullYear() - 1, now.getMonth(), 1).toISOString().split('T')[0];
       const thisMonthLastYearEnd = new Date(now.getFullYear() - 1, now.getMonth() + 1, 0).toISOString().split('T')[0];
 
-      const ivURL = (start, end) => `https://nwis.waterservices.usgs.gov/nwis/iv/?format=json&sites=${site.id}&startDT=${start}&endDT=${end}&parameterCd=00060,00010`;
+      const ivURL = `https://waterservices.usgs.gov/nwis/iv/?format=json&sites=${site.id}&parameterCd=00060,00010&siteStatus=all`;
+      const dailyMeanURL = (start, end) =>
+        `https://nwis.waterservices.usgs.gov/nwis/dv/?format=json&sites=${site.id}&startDT=${start}&endDT=${end}&parameterCd=00060,00010&statCd=00003`;
+      const dailyMaxURL = (start, end) =>
+        `https://nwis.waterservices.usgs.gov/nwis/dv/?format=json&sites=${site.id}&startDT=${start}&endDT=${end}&parameterCd=00060&statCd=00001`;
 
       try {
-        const [currentRes, yearRes, monthRes, fiveRes] = await Promise.all([
-          fetch(ivURL(today, today)),
-          fetch(ivURL(oneYearAgo, today)),
-          fetch(ivURL(thisMonthLastYearStart, thisMonthLastYearEnd)),
-          fetch(ivURL(fiveYearsAgo, today))
+        const [currentRes, meanYearRes, meanMonthRes, meanFiveRes, maxYearRes, maxMonthRes, maxFiveRes] = await Promise.all([
+          fetch(ivURL),
+          fetch(dailyMeanURL(oneYearAgo, today)),
+          fetch(dailyMeanURL(thisMonthLastYearStart, thisMonthLastYearEnd)),
+          fetch(dailyMeanURL(fiveYearsAgo, today)),
+          fetch(dailyMaxURL(oneYearAgo, today)),
+          fetch(dailyMaxURL(thisMonthLastYearStart, thisMonthLastYearEnd)),
+          fetch(dailyMaxURL(fiveYearsAgo, today))
         ]);
 
         const currentData = await currentRes.json();
-        const yearJson = await yearRes.json();
-        const monthJson = await monthRes.json();
-        const fiveJson = await fiveRes.json();
+        const yearMeanJson = await meanYearRes.json();
+        const monthMeanJson = await meanMonthRes.json();
+        const fiveMeanJson = await meanFiveRes.json();
+        const yearMaxJson = await maxYearRes.json();
+        const monthMaxJson = await maxMonthRes.json();
+        const fiveMaxJson = await maxFiveRes.json();
 
         const extractValue = (res, code) => res.value.timeSeries.find(s => s.variable.variableCode[0].value === code)?.values[0]?.value.map(v => parseFloat(v.value)).filter(v => !isNaN(v)) || [];
+        const extractMaxOnly = (res) => res.value.timeSeries[0]?.values[0]?.value.map(v => parseFloat(v.value)).filter(v => !isNaN(v)) || [];
         const extractDate = (res) => res.value.timeSeries[0]?.values[0]?.value[0]?.dateTime || '';
 
         const flow = currentData.value.timeSeries.find(s => s.variable.variableCode[0].value === '00060')?.values[0]?.value[0]?.value || 'N/A';
@@ -110,13 +121,17 @@
         const tempF = tempC ? (parseFloat(tempC) * 9/5 + 32).toFixed(1) : 'N/A';
         const timestamp = extractDate(currentData);
 
-        const yearData = extractValue(yearJson, '00060');
-        const monthData = extractValue(monthJson, '00060');
-        const fiveData = extractValue(fiveJson, '00060');
+        const yearData = extractValue(yearMeanJson, '00060');
+        const monthData = extractValue(monthMeanJson, '00060');
+        const fiveData = extractValue(fiveMeanJson, '00060');
 
-        const yearTemps = extractValue(yearJson, '00010');
+        const yearTemps = extractValue(yearMeanJson, '00010');
         const tempMinYear = yearTemps.length ? (Math.min(...yearTemps) * 9/5 + 32).toFixed(1) : null;
         const tempMaxYear = yearTemps.length ? (Math.max(...yearTemps) * 9/5 + 32).toFixed(1) : null;
+
+        const yearMaxes = extractMaxOnly(yearMaxJson);
+        const monthMaxes = extractMaxOnly(monthMaxJson);
+        const fiveMaxes = extractMaxOnly(fiveMaxJson);
 
         const percentile = (arr, p) => {
           if (!arr || !arr.length) return 'N/A';
@@ -131,9 +146,9 @@
         const minMonth = percentile(monthData, 0.1);
         const min5 = percentile(fiveData, 0.1);
 
-        const maxYear = getMax(yearData);
-        const maxMonth = getMax(monthData);
-        const max5 = getMax(fiveData);
+        const maxYear = getMax(yearMaxes);
+        const maxMonth = getMax(monthMaxes);
+        const max5 = getMax(fiveMaxes);
 
         renderTile(site.name, flow, timestamp, tempF, tempMinYear, tempMaxYear, maxYear, minYear, maxMonth, minMonth, max5, min5, index);
       } catch (e) {
@@ -181,4 +196,3 @@
   </script>
 </body>
 </html>
-
