@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Utah River Flow Dashboard</title>
+  <meta http-equiv="refresh" content="3600">
   <style>
     body {
       font-family: Arial, sans-serif;
@@ -27,6 +28,7 @@
       border-radius: 10px;
       padding: 1em;
       box-shadow: 0 2px 5px rgba(0,0,0,0.5);
+      order: var(--order);
     }
     .tile h2 {
       font-size: 1.2em;
@@ -56,12 +58,6 @@
     .metric-group {
       margin-top: 1.25em;
     }
-    .loading {
-      opacity: 0.6;
-    }
-    .error {
-      color: #ef5350;
-    }
   </style>
 </head>
 <body>
@@ -69,8 +65,7 @@
   <div class="grid" id="dashboard"></div>
 
   <script>
-    // All monitoring sites
-    const SITES = [
+    const sites = [
       { name: "Colorado River @ Potash", id: "09185600" },
       { name: "Colorado River @ Cisco", id: "09180500" },
       { name: "Mill Creek @ Left Hand", id: "09183800" },
@@ -82,222 +77,108 @@
       { name: "Middle Provo River", id: "10155200" }
     ];
 
-    async function fetchData() {
-      const dashboard = document.getElementById('dashboard');
-      dashboard.innerHTML = '';
-      
-      // Create all tiles with loading state
-      SITES.forEach(site => {
-        const tile = document.createElement('div');
-        tile.className = 'tile loading';
-        tile.id = `tile-${site.id}`;
-        tile.innerHTML = `
-          <h2>${site.name}</h2>
-          <div class="metric highlight-flow">Loading current data...</div>
-          <div class="metric"><strong>Temp:</strong> Loading...</div>
-          <div class="metric"><strong>Updated:</strong> Loading...</div>
-          <div class="metric"><strong>Quality:</strong> Loading...</div>
-          <hr>
-          <div class="metric-group">
-            <div class="metric min"><strong>Min (Last Year):</strong> Loading...</div>
-            <div class="metric max"><strong>Max (Last Year):</strong> Loading...</div>
-          </div>
-          <div class="metric-group">
-            <div class="metric min"><strong>Min (Last Yr Mo):</strong> Loading...</div>
-            <div class="metric max"><strong>Max (Last Yr Mo):</strong> Loading...</div>
-          </div>
-          <div class="metric-group">
-            <div class="metric min"><strong>Min (5 Years):</strong> Loading...</div>
-            <div class="metric max"><strong>Max (5 Years):</strong> Loading...</div>
-          </div>
-        `;
-        dashboard.appendChild(tile);
-      });
+    const dashboard = document.getElementById('dashboard');
 
-      // Fetch current data first
-      await fetchCurrentData();
-      
-      // Then fetch historical data
-      await fetchHistoricalData();
-    }
-
-    async function fetchCurrentData() {
-      try {
-        const siteIds = SITES.map(site => site.id).join(',');
-        const response = await fetch(`https://waterservices.usgs.gov/nwis/iv/?format=json&sites=${siteIds}&parameterCd=00060,00010&siteStatus=all`);
-        const data = await response.json();
-        
-        if (!data.value?.timeSeries) throw new Error("Invalid data format");
-        
-        SITES.forEach(site => {
-          const flowSeries = data.value.timeSeries.find(s => 
-            s.sourceInfo.siteCode[0].value === site.id && 
-            s.variable.variableCode[0].value === '00060');
-          
-          const tempSeries = data.value.timeSeries.find(s => 
-            s.sourceInfo.siteCode[0].value === site.id && 
-            s.variable.variableCode[0].value === '00010');
-          
-          const flowValue = flowSeries?.values[0]?.value[0];
-          const tempValue = tempSeries?.values[0]?.value[0];
-          
-          updateTile(site, {
-            current: {
-              flow: flowValue?.value,
-              temp: tempValue?.value,
-              timestamp: flowValue?.dateTime,
-              qualifiers: flowValue?.qualifiers?.join(', ') || 'Unknown'
-            }
-          });
-        });
-      } catch (error) {
-        console.error("Error fetching current data:", error);
-        SITES.forEach(site => {
-          updateTile(site, { currentError: true });
-        });
-      }
-    }
-
-    async function fetchHistoricalData() {
+    async function fetchSiteData(site, index) {
       const now = new Date();
-      const currentYear = now.getFullYear();
-      const currentMonth = now.getMonth() + 1;
-      
-      // Process each site individually
-      for (const site of SITES) {
-        try {
-          // 1. Fetch last year's raw data (all measurements)
-          const lastYearData = await fetchRawData(
-            site.id,
-            `${currentYear-1}-01-01`,
-            `${currentYear-1}-12-31`
-          );
-          
-          // 2. Fetch last year's same month raw data
-          const lastYearMonthData = await fetchRawData(
-            site.id,
-            `${currentYear-1}-${currentMonth.toString().padStart(2, '0')}-01`,
-            `${currentYear-1}-${currentMonth.toString().padStart(2, '0')}-31`
-          );
-          
-          // 3. Fetch 5-year peaks (using annual peaks service)
-          const fiveYearData = await fetchFiveYearPeaks(site.id, currentYear-5, currentYear-1);
-          
-          updateTile(site, {
-            historical: {
-              lastYear: calculateStats(lastYearData),
-              lastYearMonth: calculateStats(lastYearMonthData),
-              fiveYear: fiveYearData
-            }
-          });
-        } catch (error) {
-          console.error(`Error fetching historical data for ${site.name}:`, error);
-          updateTile(site, { historicalError: true });
-        }
+      const today = now.toISOString().split('T')[0];
+      const oneYearAgo = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate()).toISOString().split('T')[0];
+      const fiveYearsAgo = new Date(now.getFullYear() - 5, now.getMonth(), now.getDate()).toISOString().split('T')[0];
+      const thisMonthLastYearStart = new Date(now.getFullYear() - 1, now.getMonth(), 1).toISOString().split('T')[0];
+      const thisMonthLastYearEnd = new Date(now.getFullYear() - 1, now.getMonth() + 1, 0).toISOString().split('T')[0];
+
+      const baseURL = `https://waterservices.usgs.gov/nwis/iv/?format=json&sites=${site.id}&parameterCd=00060,00010&siteStatus=all`;
+      const dailyURL = (start, end) => `https://nwis.waterservices.usgs.gov/nwis/dv/?format=json&sites=${site.id}&startDT=${start}&endDT=${end}&parameterCd=00060,00010&statCd=00003`;
+
+      try {
+        const [currentRes, yearRes, monthRes, fiveRes] = await Promise.all([
+          fetch(baseURL),
+          fetch(dailyURL(oneYearAgo, today)),
+          fetch(dailyURL(thisMonthLastYearStart, thisMonthLastYearEnd)),
+          fetch(dailyURL(fiveYearsAgo, today))
+        ]);
+
+        const currentData = await currentRes.json();
+        const yearJson = await yearRes.json();
+        const monthJson = await monthRes.json();
+        const fiveJson = await fiveRes.json();
+
+        const extractValue = (res, code) => res.value.timeSeries.find(s => s.variable.variableCode[0].value === code)?.values[0]?.value.map(v => parseFloat(v.value)).filter(v => !isNaN(v)) || [];
+        const extractDate = (res) => res.value.timeSeries[0]?.values[0]?.value[0]?.dateTime || '';
+
+        const flow = currentData.value.timeSeries.find(s => s.variable.variableCode[0].value === '00060')?.values[0]?.value[0]?.value || 'N/A';
+        const tempC = currentData.value.timeSeries.find(s => s.variable.variableCode[0].value === '00010')?.values[0]?.value[0]?.value || null;
+        const tempF = tempC ? (parseFloat(tempC) * 9/5 + 32).toFixed(1) : 'N/A';
+        const timestamp = extractDate(currentData);
+
+        const yearData = extractValue(yearJson, '00060');
+        const monthData = extractValue(monthJson, '00060');
+        const fiveData = extractValue(fiveJson, '00060');
+
+        const yearTemps = extractValue(yearJson, '00010');
+        const tempMinYear = yearTemps.length ? (Math.min(...yearTemps) * 9/5 + 32).toFixed(1) : null;
+        const tempMaxYear = yearTemps.length ? (Math.max(...yearTemps) * 9/5 + 32).toFixed(1) : null;
+
+        const percentile = (arr, p) => {
+          if (!arr || !arr.length) return 'N/A';
+          const sorted = [...arr].sort((a, b) => a - b);
+          const idx = Math.floor(p * sorted.length);
+          return Math.round(sorted[idx]).toLocaleString();
+        };
+
+        const getMax = (arr) => (arr && arr.length ? Math.round(Math.max(...arr)).toLocaleString() : 'N/A');
+
+        const minYear = percentile(yearData, 0.1);
+        const minMonth = percentile(monthData, 0.1);
+        const min5 = percentile(fiveData, 0.1);
+
+        const maxYear = getMax(yearData);
+        const maxMonth = getMax(monthData);
+        const max5 = getMax(fiveData);
+
+        renderTile(site.name, flow, timestamp, tempF, tempMinYear, tempMaxYear, maxYear, minYear, maxMonth, minMonth, max5, min5, index);
+      } catch (e) {
+        console.error("Error fetching data for", site.name, e);
+        renderTile(site.name, 'N/A', '', 'N/A', null, null, 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', index);
       }
     }
 
-    async function fetchRawData(siteId, startDate, endDate) {
-      const url = `https://waterservices.usgs.gov/nwis/iv/?format=json&sites=${siteId}&startDT=${startDate}&endDT=${endDate}&parameterCd=00060`;
-      const response = await fetch(url);
-      const data = await response.json();
-      
-      if (!data.value?.timeSeries?.[0]?.values?.[0]?.value) return [];
-      
-      return data.value.timeSeries[0].values[0].value
-        .map(entry => parseFloat(entry.value))
-        .filter(val => !isNaN(val) && val >= 0); // Remove errors and invalid values
+    function renderTile(name, flow, timestamp, temp, tempMinYear, tempMaxYear, maxYear, minYear, maxMonth, minMonth, max5, min5, index) {
+      const localTime = timestamp ? new Date(timestamp).toLocaleString('en-US', { timeZone: 'America/Denver', hour: 'numeric', minute: '2-digit', month: 'short', day: 'numeric' }) : 'N/A';
+      const flowDisplay = flow !== 'N/A' ? parseFloat(flow).toLocaleString() : 'N/A';
+
+      const tempRange = tempMinYear && tempMaxYear ? `<span class="temp-range">(<span class="temp-min">${tempMinYear}°</span> - <span class="temp-max">${tempMaxYear}°</span>)</span>` : '';
+
+      const tile = document.createElement('div');
+      tile.className = 'tile';
+      tile.style.setProperty('--order', index);
+      tile.innerHTML = `
+        <h2>${name}</h2>
+        <div class="metric highlight-flow">${flowDisplay} CFS</div>
+        <div class="metric"><strong>Temp:</strong> ${temp ?? 'N/A'} °F ${tempRange}</div>
+        <div class="metric"><strong>Updated:</strong> ${localTime}</div>
+        <hr>
+        <div class="metric-group">
+          <div class="metric min"><strong>Min (Last Year):</strong> ${minYear} CFS</div>
+          <div class="metric max"><strong>Max (Last Year):</strong> ${maxYear} CFS</div>
+        </div>
+        <div class="metric-group">
+          <div class="metric min"><strong>Min (Last Yr Mo):</strong> ${minMonth} CFS</div>
+          <div class="metric max"><strong>Max (Last Yr Mo):</strong> ${maxMonth} CFS</div>
+        </div>
+        <div class="metric-group">
+          <div class="metric min"><strong>Min (5 Years):</strong> ${min5} CFS</div>
+          <div class="metric max"><strong>Max (5 Years):</strong> ${max5} CFS</div>
+        </div>
+      `;
+      dashboard.appendChild(tile);
     }
 
-    async function fetchFiveYearPeaks(siteId, startYear, endYear) {
-      const url = `https://waterdata.usgs.gov/nwis/peak?site_no=${siteId}&range_selection=years&format=rdb&begin_date=${startYear}&end_date=${endYear}`;
-      const response = await fetch(url);
-      const text = await response.text();
-      
-      const lines = text.split('\n').filter(line => !line.startsWith('#') && line.trim() !== '');
-      if (lines.length < 2) return { min: 'N/A', max: 'N/A' };
-      
-      const headers = lines[0].split('\t');
-      const data = lines[1].split('\t');
-      
-      const peakIndex = headers.indexOf('peak_va');
-      const minIndex = headers.indexOf('min_va');
-      
-      return {
-        min: (minIndex !== -1 && data[minIndex]) ? Math.round(parseFloat(data[minIndex])) : 'N/A',
-        max: (peakIndex !== -1 && data[peakIndex]) ? Math.round(parseFloat(data[peakIndex])) : 'N/A'
-      };
-    }
-
-    function calculateStats(dataPoints) {
-      if (!dataPoints.length) return { min: 'N/A', max: 'N/A' };
-      
-      return {
-        min: Math.min(...dataPoints).toLocaleString(),
-        max: Math.max(...dataPoints).toLocaleString()
-      };
-    }
-
-    function updateTile(site, { current, historical, currentError, historicalError }) {
-      const tile = document.getElementById(`tile-${site.id}`);
-      if (!tile) return;
-      
-      tile.classList.remove('loading');
-      
-      const updateElement = (selector, text) => {
-        const el = tile.querySelector(selector);
-        if (el) el.textContent = text;
-      };
-      
-      // Update current data
-      if (currentError) {
-        updateElement('.highlight-flow', 'N/A');
-        updateElement('.metric:nth-child(3)', 'Temp: N/A');
-        updateElement('.metric:nth-child(4)', 'Updated: N/A');
-        updateElement('.metric:nth-child(5)', 'Quality: Unknown');
-      } else if (current) {
-        updateElement('.highlight-flow', current.flow ? `${parseFloat(current.flow).toLocaleString()} CFS` : 'N/A');
-        updateElement('.metric:nth-child(3)', `Temp: ${current.temp ? (parseFloat(current.temp) * 9/5 + 32).toFixed(1) + ' °F' : 'N/A'}`);
-        
-        if (current.timestamp) {
-          try {
-            const localTime = new Date(current.timestamp).toLocaleString('en-US', {
-              timeZone: 'America/Denver',
-              hour: 'numeric',
-              minute: '2-digit',
-              month: 'short',
-              day: 'numeric'
-            });
-            updateElement('.metric:nth-child(4)', `Updated: ${localTime}`);
-          } catch (e) {
-            updateElement('.metric:nth-child(4)', 'Updated: N/A');
-          }
-        }
-        
-        updateElement('.metric:nth-child(5)', `Quality: ${current.qualifiers}`);
-      }
-      
-      // Update historical data
-      if (historicalError) {
-        updateElement('.metric-group:nth-child(6) .min', 'Min (Last Year): Data unavailable');
-        updateElement('.metric-group:nth-child(6) .max', 'Max (Last Year): Data unavailable');
-        updateElement('.metric-group:nth-child(7) .min', 'Min (Last Yr Mo): Data unavailable');
-        updateElement('.metric-group:nth-child(7) .max', 'Max (Last Yr Mo): Data unavailable');
-        updateElement('.metric-group:nth-child(8) .min', 'Min (5 Years): Data unavailable');
-        updateElement('.metric-group:nth-child(8) .max', 'Max (5 Years): Data unavailable');
-      } else if (historical) {
-        updateElement('.metric-group:nth-child(6) .min', `Min (Last Year): ${historical.lastYear.min} CFS`);
-        updateElement('.metric-group:nth-child(6) .max', `Max (Last Year): ${historical.lastYear.max} CFS`);
-        updateElement('.metric-group:nth-child(7) .min', `Min (Last Yr Mo): ${historical.lastYearMonth.min} CFS`);
-        updateElement('.metric-group:nth-child(7) .max', `Max (Last Yr Mo): ${historical.lastYearMonth.max} CFS`);
-        updateElement('.metric-group:nth-child(8) .min', `Min (5 Years): ${historical.fiveYear.min} CFS`);
-        updateElement('.metric-group:nth-child(8) .max', `Max (5 Years): ${historical.fiveYear.max} CFS`);
-      }
-    }
-
-    // Initialize
-    fetchData();
-    setInterval(fetchData, 15 * 60 * 1000); // Refresh every 15 minutes
+    sites.forEach((site, index) => fetchSiteData(site, index));
+    setInterval(() => {
+      dashboard.innerHTML = '';
+      sites.forEach((site, index) => fetchSiteData(site, index));
+    }, 3600000);
   </script>
 </body>
 </html>
